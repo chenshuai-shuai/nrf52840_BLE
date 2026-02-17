@@ -1,0 +1,186 @@
+source "$ZEPHYR_BASE/Kconfig"
+
+menu "NRF52840_BLE Framework"
+
+
+config DT_HAS_PPG
+	bool
+	default n
+
+config DT_HAS_IMU
+	bool
+	default n
+
+config DT_HAS_FLASH
+	bool
+	default n
+
+config DT_HAS_GPS
+	bool
+	default n
+
+config DT_HAS_BLE
+	bool
+	default n
+
+config DT_HAS_MIC
+	bool
+	default n
+
+config DT_HAS_SPK
+	bool
+	default n
+
+config DT_HAS_PM
+	bool
+	default n
+
+
+config HAL_AUDIO
+	bool "Enable HAL Audio"
+	default y
+	help
+	  Enable HAL audio abstraction layer.
+
+config DRIVER_AUDIO_NRF
+	bool "Enable nRF52840 Audio Driver"
+	default y
+	depends on HAL_AUDIO
+	help
+	  Enable nRF52840 audio driver implementation.
+
+config PLATFORM_REGISTRY
+	bool "Enable platform registry"
+	default y
+	help
+	  Enable platform registry and selection mechanism.
+
+config PLATFORM_NRF52840
+	bool "Enable nRF52840 platform"
+	default y
+	depends on PLATFORM_REGISTRY
+	help
+	  Enable nRF52840 platform registration and init.
+
+
+config HAL_PPG
+	bool "Enable HAL PPG"
+	default n
+	default y if DT_HAS_PPG
+	help
+	  Enable HAL for PPG sensor.
+
+config DRIVER_PPG_NRF
+	bool "Enable nRF52840 PPG Driver"
+	default n
+	default y if DT_HAS_PPG
+	depends on HAL_PPG
+	help
+	  Enable nRF52840 PPG driver implementation.
+
+config HAL_IMU
+	bool "Enable HAL IMU"
+	default n
+	default y if DT_HAS_IMU
+	help
+	  Enable HAL for IMU sensor.
+
+config DRIVER_IMU_NRF
+	bool "Enable nRF52840 IMU Driver"
+	default n
+	default y if DT_HAS_IMU
+	depends on HAL_IMU
+	help
+	  Enable nRF52840 IMU driver implementation.
+
+config HAL_FLASH
+	bool "Enable HAL Flash"
+	default n
+	default y if DT_HAS_FLASH
+	help
+	  Enable HAL for external flash.
+
+config DRIVER_FLASH_NRF
+	bool "Enable nRF52840 Flash Driver"
+	default n
+	default y if DT_HAS_FLASH
+	depends on HAL_FLASH
+	help
+	  Enable nRF52840 external flash driver implementation.
+
+config HAL_GPS
+	bool "Enable HAL GPS"
+	default n
+	default y if DT_HAS_GPS
+	help
+	  Enable HAL for GPS.
+
+config DRIVER_GPS_NRF
+	bool "Enable nRF52840 GPS Driver"
+	default n
+	default y if DT_HAS_GPS
+	depends on HAL_GPS
+	help
+	  Enable nRF52840 GPS driver implementation.
+
+config HAL_BLE
+	bool "Enable HAL BLE"
+	default n
+	default y if DT_HAS_BLE
+	help
+	  Enable HAL for BLE.
+
+config DRIVER_BLE_NRF
+	bool "Enable nRF52840 BLE Driver"
+	default n
+	default y if DT_HAS_BLE
+	depends on HAL_BLE
+	help
+	  Enable nRF52840 BLE driver implementation.
+
+config HAL_MIC
+	bool "Enable HAL Microphone"
+	default n
+	default y if DT_HAS_MIC
+	help
+	  Enable HAL for microphone input.
+
+config DRIVER_MIC_NRF
+	bool "Enable nRF52840 Mic Driver"
+	default n
+	default y if DT_HAS_MIC
+	depends on HAL_MIC
+	help
+	  Enable nRF52840 microphone driver implementation.
+
+config HAL_SPK
+	bool "Enable HAL Speaker"
+	default n
+	default y if DT_HAS_SPK
+	help
+	  Enable HAL for speaker output.
+
+config DRIVER_SPK_NRF
+	bool "Enable nRF52840 Speaker Driver"
+	default n
+	default y if DT_HAS_SPK
+	depends on HAL_SPK
+	help
+	  Enable nRF52840 speaker driver implementation.
+
+config HAL_PM
+	bool "Enable HAL Power Management"
+	default n
+	default y if DT_HAS_PM
+	help
+	  Enable HAL for power management.
+
+config DRIVER_PM_NRF
+	bool "Enable nRF52840 PM Driver"
+	default n
+	default y if DT_HAS_PM
+	depends on HAL_PM
+	help
+	  Enable nRF52840 power management driver implementation.
+
+endmenu
