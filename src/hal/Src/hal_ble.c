@@ -54,3 +54,19 @@ int hal_ble_recv(void *buf, size_t len, int timeout_ms)
     }
     return g_ble_ops->recv(buf, len, timeout_ms);
 }
+
+int hal_ble_is_ready(void)
+{
+    if (g_ble_ops == NULL || g_ble_ops->is_ready == NULL) {
+        return 0;
+    }
+    return g_ble_ops->is_ready();
+}
+
+int hal_ble_get_mtu(void)
+{
+    if (g_ble_ops == NULL || g_ble_ops->get_mtu == NULL) {
+        return 0;
+    }
+    return g_ble_ops->get_mtu();
+}

@@ -194,4 +194,20 @@ config BLE_TEST
 	help
 	  Enable temporary BLE test thread for driver validation.
 
+config BLE_FORCE_SECURITY
+	bool "Force BLE pairing (L2)"
+	default n
+	depends on HAL_BLE
+	depends on DRIVER_BLE_NRF
+	help
+	  Request BLE security level L2 after connection (pairing/bonding).
+
+config MIC_TEST
+	bool "Enable MIC test thread"
+	default n
+	depends on HAL_MIC
+	depends on DRIVER_MIC_NRF
+	help
+	  Enable temporary MIC test thread for driver validation.
+
 endmenu

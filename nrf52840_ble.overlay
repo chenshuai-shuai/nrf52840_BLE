@@ -53,20 +53,20 @@
 &button2 { status = "disabled"; };
 &button3 { status = "disabled"; };
 
-/* ===== PDM0: MP23DB01HP  P0.11=CLK, P0.18=DIN ===== */
+/* ===== PDM0: MP23DB01HP  P0.26=CLK, P1.00=DIN ===== */
 &pinctrl {
     pdm0_default: pdm0_default {
         group1 {
-            psels = <NRF_PSEL(PDM_CLK, 0, 11)>,
-                    <NRF_PSEL(PDM_DIN, 0, 18)>;
+            psels = <NRF_PSEL(PDM_CLK, 0, 26)>,
+                    <NRF_PSEL(PDM_DIN, 1, 0)>;
             bias-disable;
         };
     };
 
     pdm0_sleep: pdm0_sleep {
         group1 {
-            psels = <NRF_PSEL(PDM_CLK, 0, 11)>,
-                    <NRF_PSEL(PDM_DIN, 0, 18)>;
+            psels = <NRF_PSEL(PDM_CLK, 0, 26)>,
+                    <NRF_PSEL(PDM_DIN, 1, 0)>;
             low-power-enable;
         };
     };
