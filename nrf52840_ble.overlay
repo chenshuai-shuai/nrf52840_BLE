@@ -17,6 +17,10 @@
         amp-pwr-en  = &amp_pwr_en;
     };
 
+    chosen {
+        zephyr,settings-partition = &storage_partition;
+    };
+
     gpio_leds {
         compatible = "gpio-leds";
 
@@ -31,6 +35,10 @@
 };
 
 &qspi {
+    status = "disabled";
+};
+
+&mx25r64 {
     status = "disabled";
 };
 /* ===== 禁用 DK 的 LED / BUTTON（保留 node label 供 /aliases 引用） ===== */

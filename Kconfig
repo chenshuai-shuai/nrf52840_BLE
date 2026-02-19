@@ -135,6 +135,8 @@ config DRIVER_BLE_NRF
 	default n
 	default y if DT_HAS_BLE
 	depends on HAL_BLE
+	depends on BT
+	depends on BT_PERIPHERAL
 	help
 	  Enable nRF52840 BLE driver implementation.
 
@@ -182,5 +184,14 @@ config DRIVER_PM_NRF
 	depends on HAL_PM
 	help
 	  Enable nRF52840 power management driver implementation.
+
+
+config BLE_TEST
+	bool "Enable BLE test thread"
+	default n
+	depends on HAL_BLE
+	depends on DRIVER_BLE_NRF
+	help
+	  Enable temporary BLE test thread for driver validation.
 
 endmenu
