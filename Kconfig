@@ -210,4 +210,29 @@ config MIC_TEST
 	help
 	  Enable temporary MIC test thread for driver validation.
 
+config SPK_TEST
+	bool "Enable speaker test thread"
+	default n
+	depends on HAL_SPK
+	depends on DRIVER_SPK_NRF
+	help
+	  Enable temporary speaker test thread for driver validation.
+
+config SPK_BOOT_TONE
+	bool "Enable speaker boot tone"
+	default n
+	depends on HAL_SPK
+	depends on DRIVER_SPK_NRF
+	help
+	  Play a short boot tone on startup for speaker validation.
+
+config MIC_LEVEL_TEST
+	bool "Enable mic level test (RMS/peak log)"
+	default n
+	depends on HAL_MIC
+	depends on DRIVER_MIC_NRF
+	help
+	  Log microphone level (RMS/peak) locally without BLE.
+
+
 endmenu
