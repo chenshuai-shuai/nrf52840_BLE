@@ -87,7 +87,7 @@
     queue-size = <16>;
 
     /* 关键：先用内部高频时钟，绕开板上 HFXO 不稳定的问题 */
-    clock-source = "PCLK32M_HFXO";
+    clock-source = "PCLK32M";
 };
 
 &uart1 {
@@ -96,7 +96,7 @@
 
 &i2s0 {
     status = "okay";
-    clock-source = "PCLK32M_HFXO";
+    clock-source = "PCLK32M";
     pinctrl-0 = <&i2s0_default>;
     pinctrl-names = "default";
 };

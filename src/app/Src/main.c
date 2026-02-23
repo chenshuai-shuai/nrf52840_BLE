@@ -1,6 +1,10 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/atomic.h>
+#include <zephyr/drivers/clock_control.h>
+#include <zephyr/drivers/clock_control/nrf_clock_control.h>
 #include <stdint.h>
 #include <string.h>
 
@@ -15,6 +19,482 @@
 
 LOG_MODULE_REGISTER(app_main, LOG_LEVEL_INF);
 
+#ifndef AUDIO_PKT_MAGIC0
+#define AUDIO_PKT_MAGIC0 0xA5
+#define AUDIO_PKT_MAGIC1 0x5A
+#define AUDIO_PAYLOAD_MAX 200
+#endif
+
+#ifndef DOWNLINK_TEST
+#define DOWNLINK_TEST 0
+#endif
+
+struct audio_pkt_hdr {
+    uint8_t magic0;
+    uint8_t magic1;
+    uint16_t seq;
+    uint8_t frag_idx;
+    uint8_t frag_cnt;
+    uint16_t payload_len;
+} __packed;
+
+static volatile bool g_mic_upload_enabled = true;
+
+enum audio_mode {
+    AUDIO_MODE_BOOT = 0,
+    AUDIO_MODE_UPLOAD = 1,
+    AUDIO_MODE_PLAY = 2,
+};
+
+static atomic_t g_audio_mode;
+
+static void audio_set_mode(enum audio_mode mode)
+{
+    atomic_set(&g_audio_mode, (int)mode);
+    if (mode == AUDIO_MODE_PLAY) {
+        g_mic_upload_enabled = false;
+    } else if (mode == AUDIO_MODE_UPLOAD) {
+        g_mic_upload_enabled = true;
+    }
+}
+
+#ifdef CONFIG_SPK_STREAM
+#include "hal_ble.h"
+
+#define SPK_STREAM_STACK_SIZE 4096
+#define SPK_STREAM_PRIO 4
+#define SPK_PLAY_STACK_SIZE 2048
+#define SPK_PLAY_PRIO 5
+
+#define SPK_FRAME_SAMPLES 320U /* 20 ms @ 16 kHz */
+#define SPK_FRAME_BYTES (SPK_FRAME_SAMPLES * sizeof(int16_t))
+#define SPK_FRAME_Q_LEN 24
+#define SPK_BUF_LOW_WATER 2
+#define SPK_PREBUFFER_FRAMES 6
+#define SPK_TEST_BUF_MAX (96 * 1024)
+
+struct spk_frame_msg {
+    uint8_t *buf;
+    size_t len;
+    bool end;
+};
+
+K_MEM_SLAB_DEFINE(spk_rx_slab, SPK_FRAME_BYTES, SPK_FRAME_Q_LEN, 4);
+K_MSGQ_DEFINE(g_spk_frame_q, sizeof(struct spk_frame_msg), SPK_FRAME_Q_LEN, 4);
+
+static struct k_thread g_spk_rx_thread;
+RT_THREAD_STACK_DEFINE(g_spk_rx_stack, SPK_STREAM_STACK_SIZE);
+
+static struct k_thread g_spk_play_thread;
+RT_THREAD_STACK_DEFINE(g_spk_play_stack, SPK_PLAY_STACK_SIZE);
+static volatile bool g_spk_buf_full = false;
+static volatile bool g_spk_accept_audio = false;
+static volatile bool g_nrf_ready_sent = false;
+static uint32_t g_spk_rx_frames = 0;
+static uint32_t g_spk_play_frames = 0;
+static uint32_t g_spk_play_errs = 0;
+
+static void mic_drop_queue(void);
+
+
+static uint8_t g_spk_test_buf[SPK_TEST_BUF_MAX];
+static size_t g_spk_test_len = 0;
+static struct k_sem g_spk_test_sem;
+static uint32_t g_spk_test_overflow = 0;
+
+static bool handle_ctrl_msg(const uint8_t *buf, int len)
+{
+    if (len <= 0 || buf == NULL) {
+        return false;
+    }
+    if (len >= 14 && memcmp(buf, "APP_PLAY_START", 14) == 0) {
+        LOG_INF("CTRL APP_PLAY_START");
+        g_spk_accept_audio = true;
+        audio_set_mode(AUDIO_MODE_PLAY);
+        g_nrf_ready_sent = false;
+        g_spk_test_len = 0;
+        g_spk_test_overflow = 0;
+        mic_drop_queue();
+        return true;
+    }
+    if (len >= 10 && memcmp(buf, "APP_READY?", 10) == 0) {
+        LOG_INF("CTRL APP_READY?");
+        g_spk_accept_audio = false;
+        g_nrf_ready_sent = false;
+        mic_drop_queue();
+        if (hal_ble_is_ready()) {
+            const char ready[] = "NRF_READY";
+            (void)hal_ble_send(ready, sizeof(ready) - 1, 0);
+            g_nrf_ready_sent = true;
+            LOG_INF("CTRL NRF_READY sent");
+        }
+        return true;
+    }
+    if (len >= 12 && memcmp(buf, "APP_PLAY_END", 12) == 0) {
+        LOG_INF("CTRL APP_PLAY_END");
+        g_spk_accept_audio = false;
+        audio_set_mode(AUDIO_MODE_UPLOAD);
+        return true;
+    }
+    return false;
+}
+
+static uint8_t g_spk_stream_buf[SPK_FRAME_BYTES * 8];
+static uint8_t g_spk_pkt_buf[244];
+
+static void spk_rx_entry(void *p1, void *p2, void *p3)
+{
+    ARG_UNUSED(p1);
+    ARG_UNUSED(p2);
+    ARG_UNUSED(p3);
+
+    size_t stream_len = 0;
+    int64_t last_log = 0;
+    int64_t last_audio_ms = 0;
+
+    while (1) {
+        int r = hal_ble_recv(g_spk_pkt_buf, sizeof(g_spk_pkt_buf), 1000);
+        if (r <= 0) {
+            if (g_spk_accept_audio && g_spk_test_len > 0) {
+                int64_t now = k_uptime_get();
+                if (last_audio_ms != 0 && (now - last_audio_ms) > 600) {
+                    LOG_INF("SPK RX idle end, bytes=%u overflow=%u",
+                            (unsigned)g_spk_test_len,
+                            (unsigned)g_spk_test_overflow);
+                    last_audio_ms = 0;
+                    k_sem_give(&g_spk_test_sem);
+                }
+            }
+            continue;
+        }
+        if (handle_ctrl_msg(g_spk_pkt_buf, r)) {
+            continue;
+        }
+        if (r < (int)sizeof(struct audio_pkt_hdr)) {
+            continue;
+        }
+
+        struct audio_pkt_hdr *hdr = (struct audio_pkt_hdr *)g_spk_pkt_buf;
+        if (hdr->magic0 != AUDIO_PKT_MAGIC0 || hdr->magic1 != AUDIO_PKT_MAGIC1) {
+            continue;
+        }
+        if (!g_spk_accept_audio) {
+            continue;
+        }
+
+        uint16_t payload_len = sys_get_le16((uint8_t *)&hdr->payload_len);
+        uint16_t avail = (uint16_t)(r - sizeof(struct audio_pkt_hdr));
+        if (payload_len > avail) {
+            payload_len = avail;
+        }
+
+        if (hdr->frag_cnt == 0 && payload_len == 0) {
+            LOG_INF("SPK RX end, bytes=%u overflow=%u",
+                    (unsigned)g_spk_test_len,
+                    (unsigned)g_spk_test_overflow);
+            stream_len = 0;
+            last_audio_ms = 0;
+            k_sem_give(&g_spk_test_sem);
+            continue;
+        }
+        if (payload_len == 0) {
+            continue;
+        }
+
+        if (payload_len > sizeof(g_spk_stream_buf)) {
+            stream_len = 0;
+            continue;
+        }
+        if (stream_len + payload_len > sizeof(g_spk_stream_buf)) {
+            stream_len = 0;
+        }
+        size_t space = sizeof(g_spk_test_buf) - g_spk_test_len;
+        if (space > 0) {
+            size_t take = (payload_len <= space) ? payload_len : space;
+            memcpy(g_spk_test_buf + g_spk_test_len,
+                   g_spk_pkt_buf + sizeof(struct audio_pkt_hdr),
+                   take);
+            g_spk_test_len += take;
+            if (take < payload_len) {
+                g_spk_test_overflow++;
+            }
+        } else {
+            g_spk_test_overflow++;
+        }
+        int64_t now = k_uptime_get();
+        last_audio_ms = now;
+        if (now - last_log >= 1000) {
+            last_log = now;
+            LOG_INF("SPK RX bytes=%u overflow=%u",
+                    (unsigned)g_spk_test_len,
+                    (unsigned)g_spk_test_overflow);
+        }
+    }
+}
+
+static void spk_play_entry(void *p1, void *p2, void *p3)
+{
+    ARG_UNUSED(p1);
+    ARG_UNUSED(p2);
+    ARG_UNUSED(p3);
+
+    int ret = hal_spk_init();
+    if (ret != HAL_OK) {
+        LOG_ERR("spk init failed: %d", ret);
+        return;
+    }
+
+    bool eos_pending = false;
+    int64_t last_log = 0;
+    bool spk_running = false;
+    uint8_t *pending_buf = NULL;
+    size_t pending_len = 0;
+    static int16_t silence_frame[SPK_FRAME_SAMPLES] = {0};
+    static int16_t stereo_frame[SPK_FRAME_SAMPLES * 2];
+    /* Lightweight DSP state (per-channel mono) */
+    static float dc_x1 = 0.0f;
+    static float dc_y1 = 0.0f;
+    static float lp_y1 = 0.0f;
+    /* Simple voice EQ (two peaking biquads) */
+    static float eq1_x1 = 0.0f, eq1_x2 = 0.0f, eq1_y1 = 0.0f, eq1_y2 = 0.0f;
+    static float eq2_x1 = 0.0f, eq2_x2 = 0.0f, eq2_y1 = 0.0f, eq2_y2 = 0.0f;
+
+    while (1) {
+        k_sem_take(&g_spk_test_sem, K_FOREVER);
+        if (g_spk_test_len == 0) {
+            continue;
+        }
+        ret = hal_spk_start();
+        if (ret != HAL_OK) {
+            LOG_ERR("spk start failed: %d", ret);
+            continue;
+        }
+        spk_running = true;
+        size_t off = 0;
+        while (off < g_spk_test_len) {
+            size_t left = g_spk_test_len - off;
+            size_t chunk = left > SPK_FRAME_BYTES ? SPK_FRAME_BYTES : left;
+            const int16_t *mono = (const int16_t *)(g_spk_test_buf + off);
+            size_t mono_samples = chunk / sizeof(int16_t);
+            if (mono_samples > SPK_FRAME_SAMPLES) {
+                mono_samples = SPK_FRAME_SAMPLES;
+            }
+            for (size_t i = 0; i < SPK_FRAME_SAMPLES; i++) {
+                float x = (i < mono_samples) ? (float)mono[i] : 0.0f;
+                /* DC blocker / high-pass: y = x - x1 + R*y1 */
+                const float dc_r = 0.99f;
+                float y = x - dc_x1 + dc_r * dc_y1;
+                dc_x1 = x;
+                dc_y1 = y;
+                /* Pre-gain attenuation to reduce noise floor */
+                const float pre_gain = 1.10f;
+                y *= pre_gain;
+                /* Voice EQ: +3dB @ 1.5k (Q=1.0), +2dB @ 4.5k (Q=0.9) */
+                {
+                    const float b0 = 1.0781544f, b1 = -1.3478988f, b2 = 0.54294974f;
+                    const float a1 = -1.3478988f, a2 = 0.6211041f;
+                    float out = b0 * y + b1 * eq1_x1 + b2 * eq1_x2 - a1 * eq1_y1 - a2 * eq1_y2;
+                    eq1_x2 = eq1_x1;
+                    eq1_x1 = y;
+                    eq1_y2 = eq1_y1;
+                    eq1_y1 = out;
+                    y = out;
+                }
+                {
+                    const float b0 = 1.0846382f, b1 = 0.2626373f, b2 = 0.26159608f;
+                    const float a1 = 0.2626373f, a2 = 0.34623435f;
+                    float out = b0 * y + b1 * eq2_x1 + b2 * eq2_x2 - a1 * eq2_y1 - a2 * eq2_y2;
+                    eq2_x2 = eq2_x1;
+                    eq2_x1 = y;
+                    eq2_y2 = eq2_y1;
+                    eq2_y1 = out;
+                    y = out;
+                }
+                /* Gentle low-pass to reduce HF hiss (approx 7 kHz @ 16 kHz) */
+                const float lp_a = 0.25f;
+                lp_y1 = lp_a * lp_y1 + (1.0f - lp_a) * y;
+                y = lp_y1;
+                /* Noise gate with soft knee to reduce hiss on silence */
+                const float gate_th = 250.0f;
+                const float gate_knee = 150.0f;
+                float ay = y >= 0.0f ? y : -y;
+                if (ay < gate_th) {
+                    float t = ay / gate_th;
+                    float gain = (t < (gate_knee / gate_th)) ? (t * t) : t;
+                    y *= gain;
+                }
+                /* Soft limiter */
+                const float limit = 30000.0f;
+                if (y > limit) {
+                    y = limit + (y - limit) * 0.50f;
+                } else if (y < -limit) {
+                    y = -limit + (y + limit) * 0.50f;
+                }
+                if (y > 32767.0f) {
+                    y = 32767.0f;
+                } else if (y < -32768.0f) {
+                    y = -32768.0f;
+                }
+                int16_t v = (int16_t)y;
+                stereo_frame[i * 2] = v;
+                stereo_frame[i * 2 + 1] = v;
+            }
+
+            uint8_t *st = (uint8_t *)stereo_frame;
+            size_t stereo_bytes = SPK_FRAME_SAMPLES * 2 * sizeof(int16_t);
+            size_t wrote = 0;
+            while (wrote < stereo_bytes) {
+                size_t blk = SPK_FRAME_BYTES;
+                int w = hal_spk_write(st + wrote, blk, 1000);
+                if (w != HAL_OK) {
+                    g_spk_play_errs++;
+                    LOG_ERR("spk write err: %d", w);
+                    wrote = stereo_bytes;
+                    break;
+                }
+                g_spk_play_frames++;
+                wrote += blk;
+            }
+            off += chunk;
+        }
+        g_spk_test_len = 0;
+        if (spk_running) {
+            (void)hal_spk_stop();
+            spk_running = false;
+        }
+        const char done[] = "PLAY_DONE";
+        if (hal_ble_is_ready()) {
+            (void)hal_ble_send(done, sizeof(done) - 1, 0);
+        }
+        if (!DOWNLINK_TEST) {
+            audio_set_mode(AUDIO_MODE_UPLOAD);
+        }
+        g_spk_accept_audio = false;
+    }
+
+    while (1) {
+        struct spk_frame_msg msg;
+        int q = k_msgq_get(&g_spk_frame_q, &msg, K_MSEC(1000));
+        if (q == 0) {
+            if (msg.end) {
+                eos_pending = true;
+                continue;
+            }
+            if (msg.buf && msg.len > 0) {
+                if (!spk_running) {
+                    /* Buffer one frame before starting to reduce underrun risk. */
+                    if (pending_buf == NULL) {
+                        pending_buf = msg.buf;
+                        pending_len = msg.len;
+                        continue;
+                    }
+                    if (k_msgq_num_used_get(&g_spk_frame_q) < SPK_PREBUFFER_FRAMES) {
+                        /* Keep buffering until we have enough prebuffer. */
+                        k_mem_slab_free(&spk_rx_slab, msg.buf);
+                        continue;
+                    }
+                    ret = hal_spk_start();
+                    if (ret != HAL_OK) {
+                        LOG_ERR("spk start failed: %d", ret);
+                        if (pending_buf != NULL) {
+                            k_mem_slab_free(&spk_rx_slab, pending_buf);
+                            pending_buf = NULL;
+                            pending_len = 0;
+                        }
+                        k_mem_slab_free(&spk_rx_slab, msg.buf);
+                        continue;
+                    }
+                    spk_running = true;
+                    if (pending_buf != NULL) {
+                        int wp = hal_spk_write(pending_buf, pending_len, 1000);
+                        k_mem_slab_free(&spk_rx_slab, pending_buf);
+                        pending_buf = NULL;
+                        pending_len = 0;
+                        if (wp != HAL_OK) {
+                            g_spk_play_errs++;
+                            LOG_ERR("spk write err: %d", wp);
+                            (void)hal_spk_stop();
+                            spk_running = false;
+                            k_mem_slab_free(&spk_rx_slab, msg.buf);
+                            continue;
+                        } else {
+                            g_spk_play_frames++;
+                        }
+                    }
+                }
+                int w = hal_spk_write(msg.buf, msg.len, 1000);
+                if (w != HAL_OK) {
+                    g_spk_play_errs++;
+                    LOG_ERR("spk write err: %d", w);
+                    (void)hal_spk_stop();
+                    spk_running = false;
+                } else {
+                    g_spk_play_frames++;
+                }
+                k_mem_slab_free(&spk_rx_slab, msg.buf);
+            }
+        }
+        if (q != 0 && spk_running && !eos_pending) {
+            /* Feed silence to keep I2S alive if BLE jitter causes gaps. */
+            (void)hal_spk_write(silence_frame, sizeof(silence_frame), 1000);
+        }
+
+        int64_t now = k_uptime_get();
+        if (now - last_log >= 1000) {
+            last_log = now;
+            LOG_INF("SPK PLAY frames=%u errs=%u q=%u",
+                    g_spk_play_frames, g_spk_play_errs,
+                    (unsigned)k_msgq_num_used_get(&g_spk_frame_q));
+        }
+
+        if (g_spk_buf_full) {
+            size_t used = k_msgq_num_used_get(&g_spk_frame_q);
+            if (used <= SPK_BUF_LOW_WATER && hal_ble_is_ready()) {
+                const char low[] = "BUF_LOW";
+                (void)hal_ble_send(low, sizeof(low) - 1, 0);
+                g_spk_buf_full = false;
+            }
+        }
+
+        if (q != 0 && eos_pending && pending_buf != NULL && !spk_running) {
+            ret = hal_spk_start();
+            if (ret == HAL_OK) {
+                spk_running = true;
+                int wp = hal_spk_write(pending_buf, pending_len, 1000);
+                k_mem_slab_free(&spk_rx_slab, pending_buf);
+                pending_buf = NULL;
+                pending_len = 0;
+                if (wp != HAL_OK) {
+                    g_spk_play_errs++;
+                    LOG_ERR("spk write err: %d", wp);
+                    (void)hal_spk_stop();
+                    spk_running = false;
+                } else {
+                    g_spk_play_frames++;
+                }
+            } else {
+                LOG_ERR("spk start failed: %d", ret);
+            }
+        }
+
+        if (eos_pending && k_msgq_num_used_get(&g_spk_frame_q) == 0 && pending_buf == NULL) {
+            const char done[] = "PLAY_DONE";
+            if (hal_ble_is_ready()) {
+                (void)hal_ble_send(done, sizeof(done) - 1, 0);
+            }
+            eos_pending = false;
+            g_spk_accept_audio = false;
+            if (!DOWNLINK_TEST) {
+                audio_set_mode(AUDIO_MODE_UPLOAD);
+            }
+            if (spk_running) {
+                (void)hal_spk_stop();
+                spk_running = false;
+            }
+        }
+    }
+}
+#endif
 #ifdef CONFIG_MIC_LEVEL_TEST
 #define MIC_LEVEL_STACK_SIZE 2048
 #define MIC_LEVEL_PRIO 4
@@ -202,20 +682,8 @@ static void ble_test_entry(void *p1, void *p2, void *p3)
 #define MIC_UPLOAD_STACK_SIZE 2048
 #define MIC_UPLOAD_PRIO 5
 
-#define AUDIO_PKT_MAGIC0 0xA5
-#define AUDIO_PKT_MAGIC1 0x5A
-#define AUDIO_PAYLOAD_MAX 200
 #define MIC_FRAME_Q_LEN 16
 #define MIC_MTU_MIN 23
-
-struct audio_pkt_hdr {
-    uint8_t magic0;
-    uint8_t magic1;
-    uint16_t seq;
-    uint8_t frag_idx;
-    uint8_t frag_cnt;
-    uint16_t payload_len;
-} __packed;
 
 static struct k_thread g_mic_test_thread;
 RT_THREAD_STACK_DEFINE(g_mic_test_stack, MIC_TEST_STACK_SIZE);
@@ -293,35 +761,69 @@ static void mic_capture_entry(void *p1, void *p2, void *p3)
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
 
-    int ret = hal_mic_init();
-    if (ret != HAL_OK) {
-        LOG_ERR("hal_mic_init failed: %d", ret);
-        return;
+#ifdef CONFIG_SPK_BOOT_TONE
+    /* Wait for boot tone to finish and let clocks settle. */
+    while (atomic_get(&g_audio_mode) == AUDIO_MODE_BOOT) {
+        k_msleep(10);
     }
-    ret = hal_mic_start();
-    if (ret != HAL_OK) {
-        LOG_ERR("hal_mic_start failed: %d", ret);
-        return;
-    }
+    k_msleep(600);
+#endif
 
-    LOG_INF("MIC test thread started");
+    printk("mic_capture: entry\n");
+    LOG_INF("mic_capture: entry");
 
     while (1) {
-        void *buf = NULL;
-        size_t len = 0;
-        int r = hal_mic_read_block(&buf, &len, 1000);
-        if (r == HAL_OK && buf != NULL && len > 0) {
-            static uint16_t seq = 0;
-            struct mic_frame_msg msg = {
-                .buf = buf,
-                .len = len,
-                .seq = seq++,
-            };
-            int q = k_msgq_put(&g_mic_frame_q, &msg, K_NO_WAIT);
-            if (q != 0) {
-                (void)hal_mic_release(buf);
+        LOG_INF("mic_capture: init");
+        int ret = hal_mic_init();
+        if (ret != HAL_OK) {
+            LOG_ERR("hal_mic_init failed: %d", ret);
+            k_msleep(200);
+            continue;
+        }
+
+        for (int i = 0; i < 5; i++) {
+            LOG_INF("mic_capture: start attempt %d", i + 1);
+            ret = hal_mic_start();
+            if (ret == HAL_OK) {
+                break;
+            }
+            LOG_ERR("hal_mic_start failed: %d (retry %d)", ret, i + 1);
+            k_msleep(100);
+        }
+        if (ret != HAL_OK) {
+            LOG_ERR("hal_mic_start failed: %d", ret);
+            k_msleep(500);
+            continue;
+        }
+
+        LOG_INF("MIC test thread started");
+
+        while (1) {
+            void *buf = NULL;
+            size_t len = 0;
+            int r = hal_mic_read_block(&buf, &len, 1000);
+            if (r == HAL_OK && buf != NULL && len > 0) {
+                if (!g_mic_upload_enabled) {
+                    (void)hal_mic_release(buf);
+                    continue;
+                }
+                static uint16_t seq = 0;
+                struct mic_frame_msg msg = {
+                    .buf = buf,
+                    .len = len,
+                    .seq = seq++,
+                };
+                int q = k_msgq_put(&g_mic_frame_q, &msg, K_NO_WAIT);
+                if (q != 0) {
+                    (void)hal_mic_release(buf);
+                }
+            } else if (r != HAL_OK) {
+                LOG_ERR("hal_mic_read_block failed: %d", r);
+                break;
             }
         }
+        (void)hal_mic_stop();
+        k_msleep(200);
     }
 }
 
@@ -346,6 +848,12 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
         }
 
         frames++;
+
+        if (!g_mic_upload_enabled) {
+            frames_drop++;
+            (void)hal_mic_release(msg.buf);
+            goto log_stats;
+        }
 
         if (!hal_ble_is_ready() || hal_ble_get_mtu() < MIC_MTU_MIN) {
             frames_drop++;
@@ -378,6 +886,34 @@ log_stats:
 }
 #endif
 
+static void mic_drop_queue(void)
+{
+#ifdef CONFIG_MIC_TEST
+    struct mic_frame_msg msg;
+    while (k_msgq_get(&g_mic_frame_q, &msg, K_NO_WAIT) == 0) {
+        (void)hal_mic_release(msg.buf);
+    }
+#endif
+}
+
+static int ble_ensure_started(void)
+{
+#if defined(CONFIG_MIC_TEST) || defined(CONFIG_SPK_STREAM)
+    int ret = hal_ble_init();
+    if (ret != HAL_OK) {
+        LOG_ERR("hal_ble_init failed: %d", ret);
+        return ret;
+    }
+    ret = hal_ble_start();
+    if (ret != HAL_OK) {
+        LOG_ERR("hal_ble_start failed: %d", ret);
+        return ret;
+    }
+    return HAL_OK;
+#else
+    return HAL_OK;
+#endif
+}
 
 int main(void)
 {
@@ -393,8 +929,24 @@ int main(void)
         return ret;
     }
 
-#ifdef CONFIG_SPK_BOOT_TONE
-    spk_boot_tone_play();
+    audio_set_mode(AUDIO_MODE_BOOT);
+
+    LOG_INF("Build: DOWNLINK_TEST=%d MIC_TEST=%d SPK_STREAM=%d",
+            DOWNLINK_TEST,
+            IS_ENABLED(CONFIG_MIC_TEST),
+            IS_ENABLED(CONFIG_SPK_STREAM));
+
+    if (DOWNLINK_TEST) {
+        LOG_INF("Downlink test mode enabled");
+        g_mic_upload_enabled = false;
+    }
+
+#if defined(CONFIG_MIC_TEST) || defined(CONFIG_SPK_STREAM)
+    ret = ble_ensure_started();
+    if (ret != HAL_OK) {
+        printk("ble_ensure_started failed: %d\n", ret);
+        return ret;
+    }
 #endif
 
 #ifdef CONFIG_MIC_LEVEL_TEST
@@ -419,24 +971,71 @@ int main(void)
                           "ble_test");
 #endif
 
-#ifdef CONFIG_MIC_TEST
-    (void)rt_thread_start(&g_mic_test_thread,
-                          g_mic_test_stack,
-                          K_THREAD_STACK_SIZEOF(g_mic_test_stack),
-                          mic_capture_entry,
-                          NULL, NULL, NULL,
-                          MIC_TEST_PRIO,
-                          0,
-                          "mic_cap");
+#ifdef CONFIG_SPK_BOOT_TONE
+    /* Play boot tone first, then start mic upload. */
+    audio_set_mode(AUDIO_MODE_BOOT);
+    printk("boot_tone: start\n");
+    LOG_INF("Boot tone start");
+    spk_boot_tone_play();
+    LOG_INF("Boot tone done");
+    printk("boot_tone: done\n");
+    if (!DOWNLINK_TEST) {
+        audio_set_mode(AUDIO_MODE_UPLOAD);
+    }
+#else
+    if (!DOWNLINK_TEST) {
+        audio_set_mode(AUDIO_MODE_UPLOAD);
+    }
+#endif
 
-    (void)rt_thread_start(&g_mic_upload_thread,
-                          g_mic_upload_stack,
-                          K_THREAD_STACK_SIZEOF(g_mic_upload_stack),
-                          mic_upload_entry,
+#if defined(CONFIG_MIC_TEST) && (DOWNLINK_TEST == 0)
+    printk("mic_threads: start\n");
+    LOG_INF("Starting MIC threads");
+    int mic_ret = rt_thread_start(&g_mic_test_thread,
+                                  g_mic_test_stack,
+                                  K_THREAD_STACK_SIZEOF(g_mic_test_stack),
+                                  mic_capture_entry,
+                                  NULL, NULL, NULL,
+                                  MIC_TEST_PRIO,
+                                  0,
+                                  "mic_cap");
+    if (mic_ret != 0) {
+        LOG_ERR("mic_cap start failed: %d", mic_ret);
+    }
+
+    int up_ret = rt_thread_start(&g_mic_upload_thread,
+                                 g_mic_upload_stack,
+                                 K_THREAD_STACK_SIZEOF(g_mic_upload_stack),
+                                 mic_upload_entry,
+                                 NULL, NULL, NULL,
+                                 MIC_UPLOAD_PRIO,
+                                 0,
+                                 "mic_up");
+    if (up_ret != 0) {
+        LOG_ERR("mic_up start failed: %d", up_ret);
+    }
+#endif
+
+
+#ifdef CONFIG_SPK_STREAM
+    k_sem_init(&g_spk_test_sem, 0, 1);
+    (void)rt_thread_start(&g_spk_rx_thread,
+                          g_spk_rx_stack,
+                          K_THREAD_STACK_SIZEOF(g_spk_rx_stack),
+                          spk_rx_entry,
                           NULL, NULL, NULL,
-                          MIC_UPLOAD_PRIO,
+                          SPK_STREAM_PRIO,
                           0,
-                          "mic_up");
+                          "spk_rx");
+
+    (void)rt_thread_start(&g_spk_play_thread,
+                          g_spk_play_stack,
+                          K_THREAD_STACK_SIZEOF(g_spk_play_stack),
+                          spk_play_entry,
+                          NULL, NULL, NULL,
+                          SPK_PLAY_PRIO,
+                          0,
+                          "spk_play");
 #endif
 
 

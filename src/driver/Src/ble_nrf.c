@@ -17,6 +17,10 @@
 
 LOG_MODULE_REGISTER(ble_nrf, LOG_LEVEL_INF);
 
+#ifndef BLE_RX_VERBOSE
+#define BLE_RX_VERBOSE 0
+#endif
+
 struct ble_rx_msg {
     uint16_t len;
     uint8_t data[BLE_RX_MAX_LEN];
@@ -120,8 +124,12 @@ static ssize_t ble_rx_write(struct bt_conn *conn,
     }
 
     driver_stats_record_ok(&g_ble_stats);
-    LOG_INF("BLE RX len=%u", (unsigned int)copy_len);
-    LOG_HEXDUMP_INF(msg.data, copy_len, "BLE RX data");
+    if (BLE_RX_VERBOSE) {
+        LOG_INF("BLE RX len=%u", (unsigned int)copy_len);
+        LOG_HEXDUMP_INF(msg.data, copy_len, "BLE RX data");
+    } else {
+        LOG_DBG("BLE RX len=%u", (unsigned int)copy_len);
+    }
     return len;
 }
 

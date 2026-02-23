@@ -3,6 +3,8 @@
 #include <zephyr/drivers/i2s.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/drivers/clock_control.h>
+#include <zephyr/drivers/clock_control/nrf_clock_control.h>
 
 #include <stdint.h>
 #include <string.h>
@@ -43,7 +45,7 @@ static const struct device *const i2s_dev = DEVICE_DT_GET(I2S_DEV_NODE);
 #define SPK_BLOCK_SAMPLES_PER_CH  160U /* 10 ms @ 16 kHz */
 
 #define SPK_BLOCK_BYTES (SPK_BLOCK_SAMPLES_PER_CH * SPK_NUM_CHANNELS * sizeof(int16_t))
-#define SPK_BLOCK_COUNT 4U
+#define SPK_BLOCK_COUNT 8U
 
 K_MEM_SLAB_DEFINE(spk_tx_slab, SPK_BLOCK_BYTES, SPK_BLOCK_COUNT, 4);
 
@@ -98,7 +100,7 @@ static int spk_preload_and_start(void)
 {
     (void)i2s_trigger(i2s_dev, I2S_DIR_TX, I2S_TRIGGER_DROP);
 
-    for (int i = 0; i < 3; i++) {
+    for (int i = 0; i < 2; i++) {
         int16_t *blk = NULL;
         int rc = k_mem_slab_alloc(&spk_tx_slab, (void **)&blk, K_MSEC(100));
         if (rc) {
@@ -188,7 +190,16 @@ static int spk_nrf_start(void)
     }
 
     k_msleep(5);
-    return spk_preload_and_start();
+    for (int i = 0; i < 5; i++) {
+        rc = spk_preload_and_start();
+        if (rc == HAL_OK) {
+            return HAL_OK;
+        }
+        LOG_ERR("i2s start failed: %d (retry %d)", rc, i + 1);
+        (void)i2s_trigger(i2s_dev, I2S_DIR_TX, I2S_TRIGGER_DROP);
+        k_msleep(50);
+    }
+    return rc;
 }
 
 static int spk_nrf_stop(void)

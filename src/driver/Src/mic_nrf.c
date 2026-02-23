@@ -90,21 +90,18 @@ static int mic_nrf_start(void)
         return HAL_ENODEV;
     }
 
-    const struct device *clk = DEVICE_DT_GET(DT_NODELABEL(clock));
-    if (device_is_ready(clk)) {
-        (void)clock_control_on(clk, CLOCK_CONTROL_NRF_SUBSYS_HF);
-        for (int i = 0; i < 50; i++) {
-            if (clock_control_get_status(clk, CLOCK_CONTROL_NRF_SUBSYS_HF) ==
-                CLOCK_CONTROL_STATUS_ON) {
-                break;
-            }
-            k_msleep(1);
-        }
-    }
+    (void)dmic_trigger(g_mic.dev, DMIC_TRIGGER_STOP);
 
-    int ret = dmic_trigger(g_mic.dev, DMIC_TRIGGER_START);
+    int ret = 0;
+    for (int i = 0; i < 5; i++) {
+        ret = dmic_trigger(g_mic.dev, DMIC_TRIGGER_START);
+        if (ret == 0) {
+            break;
+        }
+        LOG_ERR("dmic start failed: %d (retry %d)", ret, i + 1);
+        k_msleep(50);
+    }
     if (ret) {
-        LOG_ERR("dmic start failed: %d", ret);
         return ret;
     }
 

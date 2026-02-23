@@ -226,6 +226,16 @@ config SPK_BOOT_TONE
 	help
 	  Play a short boot tone on startup for speaker validation.
 
+config SPK_STREAM
+	bool "Enable speaker BLE downlink stream"
+	default n
+	depends on HAL_SPK
+	depends on DRIVER_SPK_NRF
+	depends on HAL_BLE
+	depends on DRIVER_BLE_NRF
+	help
+	  Enable BLE downlink audio stream to speaker playback.
+
 config MIC_LEVEL_TEST
 	bool "Enable mic level test (RMS/peak log)"
 	default n
