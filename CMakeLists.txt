@@ -9,6 +9,12 @@ set(APP_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_state.c
 )
 
+if(CONFIG_IMU_TEST)
+  list(APPEND APP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_imu_test.c
+  )
+endif()
+
 set(COMMON_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/common/Src
 )
@@ -121,6 +127,10 @@ if(CONFIG_PLATFORM_NRF52840)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/Src/platform_init.c
   )
 endif()
+
+list(APPEND PLATFORM_SOURCES
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/Src/boot_tone.c
+)
 
 # App target
 file(GLOB_RECURSE COMMON_C_SOURCES

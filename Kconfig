@@ -244,5 +244,27 @@ config MIC_LEVEL_TEST
 	help
 	  Log microphone level (RMS/peak) locally without BLE.
 
+config APP_RTC_ENABLE
+	bool "Enable realtime conversation service (app_rtc)"
+	default y
+	help
+	  Enable app_rtc init and start in main application.
+
+config BOOT_TONE
+	bool "Enable boot tone"
+	default y
+	depends on HAL_SPK
+	depends on DRIVER_SPK_NRF
+	help
+	  Play a short boot tone once at startup.
+
+config IMU_TEST
+	bool "Enable IMU test thread"
+	default n
+	depends on HAL_IMU
+	depends on DRIVER_IMU_NRF
+	help
+	  Enable IMU test thread for driver validation.
+
 
 endmenu

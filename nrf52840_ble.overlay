@@ -13,6 +13,7 @@
 / {
     aliases {
         amp-sd-mode = &amp_sd_mode;
+        imu-int = &imu_int;
     };
 
     chosen {
@@ -26,6 +27,15 @@
             gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;
         };
 
+    };
+
+    gpio_keys {
+        compatible = "gpio-keys";
+
+        imu_int: imu_int {
+            gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+            label = "imu_int";
+        };
     };
 };
 
@@ -76,6 +86,23 @@
                     <NRF_PSEL_DISCONNECTED(I2S_MCK)>;
         };
     };
+
+    spi1_default: spi1_default {
+        group1 {
+            psels = <NRF_PSEL(SPIM_SCK, 0, 24)>,
+                    <NRF_PSEL(SPIM_MOSI, 0, 13)>,
+                    <NRF_PSEL(SPIM_MISO, 0, 20)>;
+        };
+    };
+
+    spi1_sleep: spi1_sleep {
+        group1 {
+            psels = <NRF_PSEL(SPIM_SCK, 0, 24)>,
+                    <NRF_PSEL(SPIM_MOSI, 0, 13)>,
+                    <NRF_PSEL(SPIM_MISO, 0, 20)>;
+            low-power-enable;
+        };
+    };
 };
 
 &pdm0 {
@@ -94,6 +121,42 @@
     status = "disabled";
 };
 
+&uart0 {
+    status = "disabled";
+};
+
+&i2c0 {
+    status = "disabled";
+};
+
+&i2c1 {
+    status = "disabled";
+};
+
+&pwm0 {
+    status = "disabled";
+};
+
+&spi3 {
+    status = "disabled";
+};
+
+&adc {
+    status = "disabled";
+};
+
+&nfct {
+    status = "disabled";
+};
+
+&usbd {
+    status = "disabled";
+};
+
+&ieee802154 {
+    status = "disabled";
+};
+
 &i2s0 {
     status = "okay";
     clock-source = "PCLK32M";
@@ -101,7 +164,29 @@
     pinctrl-names = "default";
 };
 
+&spi1 {
+    status = "okay";
+    pinctrl-0 = <&spi1_default>;
+    pinctrl-1 = <&spi1_sleep>;
+    pinctrl-names = "default", "sleep";
+    cs-gpios = <&gpio0 8 GPIO_ACTIVE_LOW>;
+
+    imu: icm42688@0 {
+        compatible = "invensense,icm42688";
+        reg = <0>;
+        spi-max-frequency = <1000000>;
+        spi-cpol;
+        spi-cpha;
+        int-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+        label = "ICM42688";
+    };
+};
+
 /* QSPI uses P0.19/0.20/0.21 on DK; disable to avoid I2S pin conflict */
 &qspi {
     status = "disabled";
+};
+
+&gpio0 {
+    /delete-property/ gpio-reserved-ranges;
 };

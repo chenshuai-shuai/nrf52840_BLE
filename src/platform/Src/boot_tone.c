@@ -1,0 +1,74 @@
+#include <zephyr/kernel.h>
+#include <zephyr/logging/log.h>
+
+#include <string.h>
+
+#include "boot_tone.h"
+#include "hal_spk.h"
+#include "error.h"
+
+LOG_MODULE_REGISTER(boot_tone, LOG_LEVEL_INF);
+
+void boot_tone_play(void)
+{
+#if !IS_ENABLED(CONFIG_BOOT_TONE)
+    return;
+#else
+    int ret = hal_spk_init();
+    if (ret != HAL_OK) {
+        LOG_ERR("boot tone: hal_spk_init failed: %d", ret);
+        return;
+    }
+
+    ret = hal_spk_start();
+    if (ret != HAL_OK) {
+        LOG_ERR("boot tone: hal_spk_start failed: %d", ret);
+        return;
+    }
+
+    static const int16_t sine32[32] = {
+        0, 2359, 4630, 6722, 8551, 10050, 11172, 11879,
+        12140, 11939, 11276, 10167, 8650, 6774, 4601, 2362,
+        0, -2362, -4601, -6774, -8650, -10167, -11276, -11939,
+        -12140, -11879, -11172, -10050, -8551, -6722, -4630, -2359
+    };
+
+    int16_t buf[160];
+    const uint32_t rate = 16000U;
+    const uint32_t tone_hz[] = { 880U, 1175U, 1568U };
+    const uint8_t tone_blocks[] = { 35, 35, 45 }; /* 10 ms per block */
+
+    LOG_INF("boot tone: start");
+    for (size_t t = 0; t < ARRAY_SIZE(tone_hz); t++) {
+        uint32_t phase = 0;
+        uint32_t step = (tone_hz[t] * 32U << 16) / rate;
+
+        for (int block = 0; block < tone_blocks[t]; block++) {
+            for (int i = 0; i < 160; i++) {
+                uint32_t idx = (phase >> 16) & 0x1FU;
+                buf[i] = sine32[idx];
+                phase += step;
+            }
+            ret = hal_spk_write(buf, sizeof(buf), 1000);
+            if (ret != HAL_OK) {
+                LOG_ERR("boot tone: hal_spk_write failed: %d", ret);
+                (void)hal_spk_stop();
+                return;
+            }
+        }
+
+        memset(buf, 0, sizeof(buf));
+        for (int block = 0; block < 7; block++) {
+            ret = hal_spk_write(buf, sizeof(buf), 1000);
+            if (ret != HAL_OK) {
+                LOG_ERR("boot tone: silent write failed: %d", ret);
+                (void)hal_spk_stop();
+                return;
+            }
+        }
+    }
+
+    (void)hal_spk_stop();
+    LOG_INF("boot tone: done");
+#endif
+}
