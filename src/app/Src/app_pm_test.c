@@ -8,6 +8,7 @@
 #include "hal_pm.h"
 #include "error.h"
 #include "rt_thread.h"
+#include "system_state.h"
 
 LOG_MODULE_REGISTER(app_pm_test, LOG_LEVEL_INF);
 
@@ -193,14 +194,18 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
 
     while (1) {
         int status = 0;
+        uint8_t chg_dtls = 0;
+        uint8_t chgin_dtls = 0;
+        uint8_t chg = 0;
+        uint8_t time_sus = 0;
         ret = hal_pm_get_status(&status);
         if (ret == HAL_OK) {
             uint8_t stat_chg_b = (uint8_t)(status & 0xFF);
             uint8_t stat_glbl = (uint8_t)((status >> 8) & 0xFF);
-            uint8_t chg_dtls = (stat_chg_b >> 4) & 0x0F;
-            uint8_t chgin_dtls = (stat_chg_b >> 2) & 0x03;
-            uint8_t chg = (stat_chg_b >> 1) & 0x01;
-            uint8_t time_sus = stat_chg_b & 0x01;
+            chg_dtls = (stat_chg_b >> 4) & 0x0F;
+            chgin_dtls = (stat_chg_b >> 2) & 0x03;
+            chg = (stat_chg_b >> 1) & 0x01;
+            time_sus = stat_chg_b & 0x01;
 
             LOG_INF("pm stat: glbl=0x%02x chg_b=0x%02x chg_dtls=%u chgin_dtls=%u chg=%u time_sus=%u",
                     stat_glbl, stat_chg_b, chg_dtls, chgin_dtls, chg, time_sus);
@@ -232,6 +237,7 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
         /* Fuel gauge (I2C 0x36) */
         {
             uint16_t raw = 0;
+            pm_state_t state = {0};
             if (fg_read16(i2c, FG_REG_REPSOC, &raw) == 0) {
                 uint16_t soc_int = (uint16_t)(raw >> 8);
                 uint16_t soc_frac = (uint16_t)(((uint32_t)(raw & 0xFF) * 100U) / 256U);
@@ -241,6 +247,8 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
                 uint32_t soc_x100 = (uint32_t)soc_int * 100U + soc_frac;
                 uint32_t cap_est = (FG_DESIGNCAP_MAH * soc_x100) / 10000U;
                 LOG_INF("fg cap est: %u mAh (design=%u mAh)", cap_est, FG_DESIGNCAP_MAH);
+
+                state.soc_x100 = (uint16_t)soc_x100;
             } else {
                 LOG_WRN("fg soc read failed");
             }
@@ -249,6 +257,7 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
                 /* Use fixed-point: mV = raw * 78.125uV => raw * 78125 / 1,000,000 */
                 uint32_t mv = (uint32_t)raw * 78125U / 1000000U;
                 LOG_INF("fg vcell: %u mV (raw=0x%04x)", mv, raw);
+                state.vcell_mv = (uint16_t)mv;
             } else {
                 LOG_WRN("fg vcell read failed");
             }
@@ -259,6 +268,7 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
                 int32_t ma = (int32_t)cur_raw * 15625 / (int32_t)FG_RSENSE_MOHM / 10000;
                 LOG_INF("fg current est: %d mA (raw=0x%04x, rsense=%u mOhm)",
                         (int)ma, (uint16_t)cur_raw, FG_RSENSE_MOHM);
+                state.current_ma = (int16_t)ma;
             } else {
                 LOG_WRN("fg current read failed");
             }
@@ -269,6 +279,14 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
             } else {
                 LOG_WRN("fg repcap read failed");
             }
+
+            state.chg_dtls = chg_dtls;
+            state.chgin_dtls = chgin_dtls;
+            state.chg = chg;
+            state.time_sus = time_sus;
+            state.timestamp_ms = (uint32_t)k_uptime_get();
+            state.valid = 1;
+            system_state_set_pm(&state);
         }
         k_msleep(1000);
     }

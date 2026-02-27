@@ -11,6 +11,7 @@
 #include "app_imu_test.h"
 #include "app_pm_test.h"
 #include "boot_tone.h"
+#include "system_state.h"
 
 #include <zephyr/logging/log.h>
 
@@ -23,6 +24,8 @@ int main(void)
         printk("platform_init failed: %d\n", ret);
         return ret;
     }
+
+    system_state_init();
 
 #if IS_ENABLED(CONFIG_BOOT_TONE)
     boot_tone_play();
@@ -46,7 +49,10 @@ int main(void)
     app_imu_test_start();
 #endif
 
-#if IS_ENABLED(CONFIG_PM_TEST)
+#if IS_ENABLED(CONFIG_PM_SERVICE)
+    printk("pm_service: start\n");
+    app_pm_test_start();
+#elif IS_ENABLED(CONFIG_PM_TEST)
     printk("pm_test: start\n");
     app_pm_test_start();
 #endif

@@ -274,5 +274,27 @@ config PM_TEST
 	help
 	  Enable PMIC test thread for driver validation.
 
+config PM_SERVICE
+	bool "Enable PMIC service thread"
+	default y
+	depends on HAL_PM
+	depends on DRIVER_PM_NRF
+	help
+	  Enable background PMIC service for battery/charger monitoring.
+
+config PM_SERVICE_INTERVAL_MS
+	int "PMIC service interval (ms)"
+	default 1000
+	depends on PM_SERVICE
+	help
+	  Sampling interval for PMIC service updates.
+
+config PM_SERVICE_DEBUG_LOG
+	bool "Enable PMIC service debug log"
+	default n
+	depends on PM_SERVICE
+	help
+	  Periodic battery log from PM service.
+
 
 endmenu
