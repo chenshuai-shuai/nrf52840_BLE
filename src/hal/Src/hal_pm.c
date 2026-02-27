@@ -38,3 +38,11 @@ int hal_pm_get_status(int *status)
     }
     return g_pm_ops->get_status(status);
 }
+
+int hal_pm_set_gpio1(int level)
+{
+    if (g_pm_ops == NULL || g_pm_ops->set_gpio1 == NULL) {
+        return HAL_ENODEV;
+    }
+    return g_pm_ops->set_gpio1(level);
+}

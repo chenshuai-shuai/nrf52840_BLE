@@ -1,0 +1,16 @@
+description: Maxim MAX77658 PMIC
+
+compatible: "maxim,max77658"
+
+include:
+  - name: i2c-device.yaml
+
+properties:
+  nirq-gpios:
+    type: phandle-array
+    required: false
+    description: nIRQ interrupt pin (active low, open-drain)
+  alrt-gpios:
+    type: phandle-array
+    required: false
+    description: ALRT alert pin (active low, open-drain)

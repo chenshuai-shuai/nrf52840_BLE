@@ -9,6 +9,7 @@
 #include "app_rtc.h"
 #include "app_state.h"
 #include "app_imu_test.h"
+#include "app_pm_test.h"
 #include "boot_tone.h"
 
 #include <zephyr/logging/log.h>
@@ -43,6 +44,11 @@ int main(void)
 #if IS_ENABLED(CONFIG_IMU_TEST)
     printk("imu_test: start\n");
     app_imu_test_start();
+#endif
+
+#if IS_ENABLED(CONFIG_PM_TEST)
+    printk("pm_test: start\n");
+    app_pm_test_start();
 #endif
 
     return 0;

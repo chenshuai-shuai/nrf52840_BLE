@@ -266,5 +266,13 @@ config IMU_TEST
 	help
 	  Enable IMU test thread for driver validation.
 
+config PM_TEST
+	bool "Enable PMIC test thread"
+	default n
+	depends on HAL_PM
+	depends on DRIVER_PM_NRF
+	help
+	  Enable PMIC test thread for driver validation.
+
 
 endmenu

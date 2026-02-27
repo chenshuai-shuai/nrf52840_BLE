@@ -14,6 +14,11 @@ if(CONFIG_IMU_TEST)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_imu_test.c
   )
 endif()
+if(CONFIG_PM_TEST)
+  list(APPEND APP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_pm_test.c
+  )
+endif()
 
 set(COMMON_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/common/Src
