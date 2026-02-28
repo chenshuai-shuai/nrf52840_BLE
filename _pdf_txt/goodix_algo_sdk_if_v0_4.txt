@@ -1,0 +1,442 @@
+
+
+--- page 1 ---
+GH(M)3x2x驱动库移植指南  
+ 1 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+ 
+ 
+ 
+ 
+ 
+Goodix算法调用 SDK接口说明书  
+V 0.4 
+ 
+ 
+ 
+ 
+ 
+ 
+====== 免责声明 ======  
+本出版物中所述的器件应用信息及其他类似内容仅为您提供 便利，它们可能由更新之信息所替代。确保应
+用符合技术规范，是您自身应负的责任。深圳市汇顶科技股份有限公司（以下简称 “GOODIX” ）对这些信息
+不作任何明示或暗示、书面或口头、法定或其他形式的声明或担保，包括但不限于针对其使用情况、质
+量、性能、适销性或特定用途的适用性的声明或担保。 GOODIX 对因这些信息及使用这些信息而引起的后
+果不承担任何责任。未经 GOODIX书面批准，不得将 GOODIX 的产品用作生命维持系统中的关键组件。在
+GOODIX 知识产权保护下，不得暗中或以其他方式转让任何许可证。  Goodix Confidential For pn@lierda.com Only
+
+
+--- page 2 ---
+GH(M)3x2x驱动库移植指南  
+ 2 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+目录 
+1 概述  ................................ ................................ ................................ ................................ ................................ ..... 3 
+ 本文档目的  ................................ ................................ ................................ ................................ .........................  3 
+ 假定  ................................ ................................ ................................ ................................ ................................ ..... 3 
+ 软件运行环境  ................................ ................................ ................................ ................................ .....................  3 
+2 文件结构 ................................ ................................ ................................ ................................ ..............................  3 
+3 算法调用 SDK配置  ................................ ................................ ................................ ................................ ..............  4 
+4 SDK模块初始化 ................................ ................................ ................................ ................................ ...................  6 
+5 算法寄存器配置设置 ................................ ................................ ................................ ................................ ...........  7 
+6 SDK调用 GOODIX算法  ................................ ................................ ................................ ................................ .......  7 
+7 SDK各算法 HOOK函数  ................................ ................................ ................................ ................................ .......  8 
+ 函数接口  ................................ ................................ ................................ ................................ .............................  8 
+ 结果说明  ................................ ................................ ................................ ................................ .............................  9 
+7.2.1  HR ................................ ................................ ................................ ................................ ................................ .... 9 
+7.2.2  SPO2  ................................ ................................ ................................ ................................ ................................  9 
+7.2.3  HRV  ................................ ................................ ................................ ................................ ................................ . 9 
+7.2.4  ECG ................................ ................................ ................................ ................................ ................................  10 
+7.2.5  NADT_GREEN/NADT_IR  ................................ ................................ ................................ ................................  10 
+8 算法内存池 SIZE计算  ................................ ................................ ................................ ................................ .........  10 
+ 各功能串行  ................................ ................................ ................................ ................................ .......................  10 
+ 全功能并行  ................................ ................................ ................................ ................................ .......................  10 
+ 各功能组串行  ................................ ................................ ................................ ................................ ...................  11 
+9 用户替换算法库操作步骤  ................................ ................................ ................................ ................................ .. 11 
+10 版本记录  ................................ ................................ ................................ ................................ ........................  12 
+  Goodix Confidential For pn@lierda.com Only
+
+
+--- page 3 ---
+GH(M)3x2x驱动库移植指南  
+ 3 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+1 概述  
+本章主要针对 Goodix算法调用 SDK进行接口说明 。 
+ 本文档目的  
+本文档用来介绍如何移植 Goodix算法调用 SDK，适配 GH3X2X驱动，也可以作为参考来编写其它
+芯片驱动的 Goodix算法调用接口 。 
+ 假定  
+本文档假定您已经具备 C程序设计语言的基础知识，对 GH(M)3x2x 芯片与Goodix健康算法 的功
+能有初步的了解。  
+ 软件运行环境  
+需要 C标准库  <stdio.h> 、 <stdlib.h> 、 <string.h> 支持。 
+2 文件结构  
+算法库文件结构：  
+ 
+图 2-1 算法库平台文件列表  
+每个文件夹内为各功能算法库：  
+ 
+图 2-2 平台文件夹内各算法库列表  
+算法调用库文件结构为：  
+Goodix Confidential For pn@lierda.com Only
+
+
+--- page 4 ---
+GH(M)3x2x驱动库移植指南  
+ 4 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+├─goodix_algo_application  
+│  ├─inc  
+│  │      gh3x2x_demo_algorithm_calc.h  
+│  │      gh3x2x_demo_algo_call.h  
+│  │      gh3x2x_demo_algo_config.h  
+│  │      gh3x2x_demo_algo_hook.h  
+│  │      gh3x2x_demo_algo_memory.h  
+│  │      gh3x2x_demo_common.h  
+│  │       
+│  └─src  
+│          gh3x2x_demo_algo_call.c  
+│          gh3x2x_demo_algo_config.c  
+│          gh3x2x_demo_algo_hook.c  
+│          gh3x2x_demo_algo_memory.c  
+│          gh3x2x_demo_strategy.c  
+│           
+└─goodix_algo_call  
+    ├─inc  
+    │      goodix_af.h  
+    │      goodix_algo.h  
+    │      goodix_algo_bt .h 
+    │      goodix_ecg.h  
+    │      goodix_hba.h  
+    │      goodix_hrv.h  
+    │      goodix_hsm.h  
+    │      goodix_mem.h  
+    │      goodix_nadt.h  
+    │      goodix_resp.h  
+    │      goodix_spo2.h  
+    │      goodix_type.h  
+    │       
+    └─src  
+            gh3x2x_demo_algo_call_af.c  
+            gh3x2x_demo_algo_call_bt.c  
+            gh3x2x_demo_algo_call_ecg.c  
+            gh3x2x_demo_algo_call_hr.c  
+            gh3x2x_demo_algo_call_hrv.c  
+            gh3x2x_demo_algo_call_hsm.c  
+            gh3x2x_ demo_algo_call_nadt.c  
+            gh3x2x_demo_algo_call_resp.c  
+            gh3x2x_demo_algo_call_spo2.c  
+goodix_algo_application 文件夹包含配置相关函数、各算法调用函数等算法应用接口函数。  
+goodix_algo_ call文件夹包含各算法独立调用函数与各算法库头文件与公共头文件。  
+3 算法调用 SDK配置  
+本节讲解算法调用 SDK的配置方式，用户可根据需求，对“ gh3x2x_demo _algo _config.h”文件中
+的宏定义进行修改。可配置的参数如下：  
+表 3-1 配置表  
+宏 可配置值  描述  
+__ALGO_RUN_SIMULTANEOUSLY_SUPP
+ORT__  SUPPORT_NO_MULTI_
+ALGORITHM  各功能串行 
+SUPPORT_MULTI_ALG
+ORITHM  全功能并行  
+SUPPORT_GROUP_MU
+LTI_ALGORITHM  各功能组 串行  Goodix Confidential For pn@lierda.com Only
+
+
+--- page 5 ---
+GH(M)3x2x驱动库移植指南  
+ 5 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+#if (__ALGO_RUN_SIMULTANEOUSLY_SUPPORT__ == 
+SUPPORT_GROUP_MULTI_ALGORITHM)  
+GH3X2X_ALGO_FUNCTION_GROUP_0  功能组 0 功能组，参考第 6章 
+GH3X2X_ALGO_FUNCTION_GROUP_ 1 功能组 1 功能组  
+GH3X2X_ALGO_FUNCTION_GROUP_ 2 功能组 2 功能组  
+GH3X2X_ALGO_FUNCTION_GROUP_ 3 功能组 3 功能组  
+GH3X2X_ALGO_FUNCTION_GROUP_ 4 功能组 4 功能组  
+#endif  
+__USER_DYNAMIC_ALGO_MEM_EN__  0 内存池大小自动赋值  
+1 内存池大小交由用户
+在自己赋值  
+#if __USER_DYNAMIC_ALGO_MEM_EN__  
+GH3X2X_ALGORITHMS_MEMORY_SIZE_
+USERSET  设置值  用户设置内存值  
+#endif  
+__USE_GOODIX_HR_ALGORITHM__  1 使用 GOODIX HR 算法  
+0 不使用 GOODIX HR 算法  
+__USE_GOODIX_HRV_ALGORITHM__  1 使用 GOODIX HRV 算法  
+0 不使用 GOODIX HRV 算
+法 
+__USE_GOODIX_H SM_ALGORITHM__  1 使用 GOODIX H SM算法  
+0 不使用 GOODIX HSM算
+法 
+__USE_GOODIX_SPO2_ALGORITHM__  1 使用 GOODIX SPO2 算法  
+0 不使用 GOODIX SPO2 算
+法 
+__USE_GOODIX_ECG_ALGORITHM__  1 使用 GOODIX ECG算法  
+0 不使用 GOODIX ECG 算
+法 
+__USE_GOODIX_ BT_ALGORITHM__  1 使用 GOODIX BT算法  
+0 不使用 GOODIX BT算法  
+__USE_GOODIX_ RESP _ALGORITHM__  1 使用 GOODIX RESP算法  
+0 不使用 GOODIX RESP算
+法 
+__USE_GOODIX_ AF_ALGORITHM__  1 使用 GOODIX AF算法  
+0 不使用 GOODIX AF算法  
+__USE_GOODIX_ BP_ALGORITHM__  1 使用 GOODIX BP算法  
+0 不使用 GOODIX BP算法  
+__USE_GOODIX_SOFT_ADT_ALGORITH
+M__  1 使用 GOODIX SOFT_ADT
+算法  Goodix Confidential For pn@lierda.com Only
+
+
+--- page 6 ---
+GH(M)3x2x驱动库移植指南  
+ 6 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+0 不使用 GOODIX 
+SOFT_ADT 算法  
+__ALGO_LOG_CONFIG__  1 开启算法 log 
+0 关闭算法 log 
+__GH3X2X_HR_OUTPUT_VALUE_STRAT
+EGY_EN__  1 HR结果进行处理  
+0 HR结果不进行处理  
+__HR_ALGORITHM_SUPPORT_CHNL_N
+UM__  1-4 HR算法支持 PD数 
+__SPO2_ALGORITHM_SUPPORT_CHNL_
+NUM__  1-4 SPO2算法支持 PD数 
+#if (__USE_GOODIX_SOFT_ADT_ALGORITHM__)  
+__SOFT_ADT_IR_DETECT_TIMEOUT__  30 红外活体检测 Timeout
+时长（单位： s） 
+#endif  
+4 SDK模块初始化  
+在使用算法调用接口前，需要初始化一些参数，包括 sensor配置、数据结构体注册 与内存初始化
+等。初始化函数如下：  
+表 4-1 算法调用初始化函数  
+函数名  GH3X2X_AlgoMemoryConfig  
+描述  初始化内存池  
+入参  无 
+出参  无 
+返回值  无 
+函数名  GH3X2X_RegisterFuncInfoStruct  
+描述  结构体注册 ，结构体具体参考《 GH(M)3x2x 驱动库移植指南 V4.0》第3.14.2章 
+入参  const STGh3x2xFrameInfo * const   pstGh3x2xFrameInfo[]  功能结构体  
+出参  无 
+返回值  无 
+函数名  GH3X2X_InitAlgoConfigParameters  
+描述  初始化配置参数  
+入参  无 
+出参  无 
+返回值  无 
+函数名  GH3X2X_AlgoSensorEnable  
+描述  设置 sensor开启 /关闭  
+入参  GU8 uchAlgoGsensorEnable  Gsensor  1：开启 /0：关闭  
+GU8 uchAlgoCapEnable  电容 sensor  1：开启 /0：关闭  
+GU8 uchAlgoTempEnable  温度 sensor  1：开启 /0：关闭  Goodix Confidential For pn@lierda.com Only
+
+
+--- page 7 ---
+GH(M)3x2x驱动库移植指南  
+ 7 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+出参  无 
+返回值  无 
+ 
+5 算法寄存器配置设置  
+参考《 GH(M)3x2x 驱动库移植指南 V4.0》第 3.14. 3章，该函数可设置在
+gh3x2x_write_algo_config_hook 函数中  
+表 5-1 算法配置函数  
+函数名  GH3X2X_WriteAlgConfigWithVirtualReg  
+描述  算法虚拟寄存器配置  
+入参  GU16 usVirtualRegAddr  虚拟寄存器地址  
+GU16 usVirtualRegValue  虚拟寄存器值  
+出参  无 
+返回值  无 
+6 SDK调用 Goodix算法  
+算法调用 SDK中，主要包含 4个操作算法的 函数接口，包括初始化、计算、反初始化与获取
+Goodix算法版本号 。 
+4个函数接口描述如下：  
+表 6-1 算法计算函数  
+函数名  GH3X2X_AlgoVersion  
+描述  获取指定功能算法 版本号  
+入参  GU32 unFunctionID  需要获取版本号的算法功能 ： 
+GH3X2X_FUNC_OFFSET_HR ：HR 
+GH3X2X_FUNC_OFFSET_SPO2 ：SPO2 
+GH3X2X_FUNC_OFFSET_ECG ：ECG 
+出参  GCHAR version[100]  版本号 buffer  
+返回值  无 
+函数名  GH3X2X_AlgoInit  
+描述  初始化指定功能算法  
+入参  GU32 unFunctionID  需要开启采样的 算法功能  
+GH3X2X_FUNCTION_HR ：HR 
+GH3X2X_FUNCTION_SPO2 ：SPO2 
+GH3X2X_FUNCTION_ECG ：ECG 
+出参  无 Goodix Confidential For pn@lierda.com Only
+
+
+--- page 8 ---
+GH(M)3x2x驱动库移植指南  
+ 8 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+返回值  GH3X2X_RET_OK 计算成功  
+GH3X2X_RET_RESOURCE_ERROR 该功能未初始化  
+函数名  GH3X2X_AlgoCalculate  
+描述  指定功能算法计算接口  
+入参  GU32 unFunctionID  需要开启采样的 算法功能  
+GH3X2X_FUNCTION_HR ：HR 
+GH3X2X_FUNCTION_SPO2 ：SPO2 
+GH3X2X_FUNCTION_ECG ：ECG 
+出参  无 
+返回值  GH3X2X_RET_OK 计算成功  
+GH3X2X_RET_RESOURCE_ERROR 该功能未初始化  
+函数名  GH3X2X_AlgoD einit 
+描述  指定功能算法反初始化接口  
+入参  GU32 unFunctionID  需要开启采样的功能  
+GH3X2X_FUNCTION_HR ：HR 
+GH3X2X_FUNCTION_SPO2 ：SPO2 
+GH3X2X_FUNCTION_ECG ：ECG 
+出参  无 
+返回值  GH3X2X_RET_OK 计算成功  
+GH3X2X_RET_RESOURCE_ERROR 该功能未初始化  
+7 SDK各算法 Hook函数  
+ 函数接口  
+函数名  GH3X2X_ 功能名 AlgorithmResultReport  
+描述  各功能 Hook函数  
+入参   
+出参  STGh3x2xAlgoResult * pstAlgoResult  typedef struct  
+{ 
+    GU8 uchUpdateFlag; //更新标记  
+    GU8 uchResultNum; //结果数量  
+    GU16 usResultBit; //结果更新 bit 
+    GS32 snResult[ X];//结果 buffer  
+} STGh3x2xAlgoResult;  
+结果更新 bit指每个 bit相当于结果更新
+的Flag，比如 0x3指的是 buffer中第 0
+和第 1个结果更新了，其它未更新  
+GU32 lubFrameId  帧数  
+返回值  GH3X2X_RET_OK 计算成功  
+GH3X2X_RET_RESOURCE_ERROR 该功能未初始化  Goodix Confidential For pn@lierda.com Only
+
+
+--- page 9 ---
+GH(M)3x2x驱动库移植指南  
+ 9 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+ 结果说明  
+结构体中，各功能 snResult [X]中各结果含义如下：  
+7.2.1  HR 
+Result_ Index  描述  
+snResult[0]  心率值（单位： bpm） 
+snResult[1]  置信度分数（ 0~100） 
+snResult[2]  信噪比：滤波后频谱主峰能量与总能量之比  
+snResult[3]  预留  
+ 
+7.2.2  SPO2  
+Result_ Index  描述  
+snResult[0]  相对血氧饱和度（单位： %） 
+snResult[1]  综合 R值*10000  
+snResult[2]  置信度：各路通道输出的实时置信度（即出值策略处理后的），范围
+0~100； 
+snResult[3]  置信等级：范围 -2~5，值越大，输出值依赖策略卡控的 成分越少，负值表示
+异常  
+-1：表示当前秒的实时计算结果未被推进缓存队列或缓存队列长度不足，可
+能出现在首次出值前若干秒或当前秒存在运动调光等异常；  
+-2：之前出过值，但长时间信号异常，缓存队列长度不足，重置状态机为初
+始态；  
+-3：当前信号较差  
+snResult[ 4] 心率值（暂无用）  
+snResult[ 5] 数据无效标记，无效时 bit位为 1 
+bit0:运动异常标记  
+bit1:手表朝向异常标记  
+bit2:调光标记  
+bit3:R值无效标记  
+7.2.3  HRV  
+ 
+Result_ Index  描述  
+snResult[0]  RRI0值（单位： ms） 
+snResult[1]  RRI1值（单位： ms） 
+snResult[2]  RRI2值（单位： ms） Goodix Confidential For pn@lierda.com Only
+
+
+--- page 10 ---
+GH(M)3x2x驱动库移植指南  
+ 10 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+snResult[3]  RRI3值（单位： ms） 
+snResult[4]  置信度： 0不可信， 25低置信度， 75高置信度， 100可信  
+snResult[5]  RRI数量  
+ 备注： HRV结果每秒输出一次，每次输出的为最新 1s内的 RRI个数，以及各个 RRI的时间值  
+7.2.4  ECG  
+ 
+Result_ Index  描述  
+snResult[0]  ECG电压信号（单位： 10uV） 
+snResult[1]  心率值（单位： bpm） 
+snResult[2]  信噪比：滤波后频谱主峰能量与总能量之比  
+ 
+7.2.5  NADT _GREEN/NADT_IR  
+Result_ Index  描述  
+snResult[0]  (bit0 -bit1)：佩戴状态（ 0默认， 1佩戴， 2脱落， 3非活体）  
+(bit2)：疑似脱落标记（ 0正常， 1疑似脱落）  
+snResult[1]  活体置信度（ 0-100）， 0-20活体概率低， 80-100活体概率高；  
+8 算法内存池 Size计算  
+算法内存池 buffer为GU32 
+g_punGh3x2xAlgoMemBuffer[GH3X2X_ALGORITHMS_MEMORY_SIZE_FINAL/4]  
+ 各功能串行  
+__ALGO_RUN_SIMULTANEOUSLY_SUPPORT__ 宏设为 SUPPORT_NO_MULTI_ALGORITHM 。 
+该buffer大小计算公式为：  
+GH3X2X_ALGORITHMS_MEMORY_SIZE_FINAL = MAX[ 各功能常驻内存  + 各功能峰值内存差值  + 各
+功能余量 ] 
+ 全功能并行  
+__ALGO_RUN_SIMULTANEOUSLY_SUPPORT__ 宏设为 SUPPORT_MULTI_ALGORITHM 。 
+该buffer大小计算公式为：  Goodix Confidential For pn@lierda.com Only
+
+
+--- page 11 ---
+GH(M)3x2x驱动库移植指南  
+ 11 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+ 总常驻内存  = 功能 1常驻内存  + 功能 2常驻内存… . + 功能 n常驻内存  
+ 峰值内存差值  = MAX[各功能峰值内存  – 各功能常驻内存 ]  
+ 余量  = MAX[各功能余量 ] 
+GH3X2X_ALGORITHMS_MEMORY_SIZE_FINAL = 总常驻内存 +峰值内存差值 +余量  
+ 各功能组 串行  
+__ALGO_RUN_SIMULTANEOUSLY_SUPPORT__ 宏设为 SUPPORT_GROUP_MULTI_ALGORITHM 。 
+SDK中允许设置 5组功能，在 gh3x2x_demo_algo_config.h 中设置
+GH3X2X_ALGO_FUNCTION_GROUP_0 ~4的功能。建议设置为：  
+#define GH3X2X_ALGO_FUNCT ION_GROUP_0 (GH3X2X_FUNCTION_HR  
+|GH3X2X_FUNCTION_HRV|GH3X2X_FUNCTION_SOFT_ADT_G REEN|GH3X2X_FUNCTION_SOFT_ADT_IR)  
+#define GH3X2X_ALGO_FUNCTION_GROUP_1 (GH3X2X_FUNCTION_ECG)  
+#define GH3X2X_ALGO_FUNCTION_GROUP_2 (GH3X2X_FUNCTION_BT)  
+#define GH3X2X_ALGO_FUNCTION_GROUP_3 ( GH3X2X_FUNCTION_SPO2 ) 
+#define GH3X2X_ALGO_FUNCTION_GROUP_4 (GH3X2X_ NO_FUNCTION)  
+buffer大小计算公式为：  
+各组分别计算 ： 
+总常驻内存  = 功能 1常驻内存  + 功能 2常驻内存… . + 功能 n常驻内存  
+峰值内存差值  = MAX[各功能峰值内存  – 各功能常驻内存 ]  
+ 余量  = MAX[各功能余量 ] 
+GH3X2X_ALGORITHMS_MEMORY_SIZE_FINAL _0~4 = 总常驻内存 +峰值内存差值 +余量  
+GH3X2X_ALGORITHMS_MEMORY_SIZE_FINAL  = 
+MAX[ GH3X2X_ALGORITHMS_MEMORY_SIZE_FINAL_ 0~4] 
+9 用户替换算法库操作步骤  
+1、 替换算法库 ，即替换对应平台文件夹中的对应算法库。 举例：  Goodix Confidential For pn@lierda.com Only
+
+
+--- page 12 ---
+GH(M)3x2x驱动库移植指南  
+ 12 汇顶科技   机密信息  
+未经允许   不得转载  问题反馈  
+ 
+图 9-1 替换算法库示例  
+2、 根据算法给出的 checklist，更改 gh3x2x_demo_algo_memory.h 中对应算法的内存池大小。 举
+例：  
+ 
+图 9-2 更改单功能算法 内存大小 示例  
+ 具体算法功能组合后的 Ram与Rom大小请参考 《CardiffA 驱动库资源统计 》表格文件。  
+10 版本记录  
+表 10-1版本记录  
+文件版本  修改时间  修订 
+V0.1 2021-12-31 初版 
+V0.2 2022 -02-16 根据公版， 更新部分函数  
+V0.3 2022 -02-18 更新算法替换步骤与文件结构  
+ 
+ Goodix Confidential For pn@lierda.com Only

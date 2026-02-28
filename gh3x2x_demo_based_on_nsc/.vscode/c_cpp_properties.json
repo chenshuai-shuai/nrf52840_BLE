@@ -1,0 +1,23 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${default}",
+                "${workspaceFolder}/src/gh3x2x_lib_v4003/demo_algo_code/goodix_algo_application/inc",
+                "${workspaceFolder}/src/gh3x2x_lib_v4003/demo_kernel_code/inc"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE"
+            ],
+            "compilerPath": "D:\\CompilationTools\\mingw64\\bin\\gcc.exe",
+            "cStandard": "gnu17",
+            "cppStandard": "gnu++14",
+            "intelliSenseMode": "windows-gcc-x64",
+            "configurationProvider": "nrf-connect"
+        }
+    ],
+    "version": 4
+}
