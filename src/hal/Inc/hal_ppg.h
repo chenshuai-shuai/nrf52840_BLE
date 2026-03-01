@@ -14,6 +14,14 @@ typedef struct {
     int (*read)(void *buf, size_t len, int timeout_ms);
 } hal_ppg_ops_t;
 
+typedef struct {
+    int32_t hr_bpm;
+    int32_t confidence;
+    int32_t snr;
+    uint32_t frame_id;
+    uint32_t timestamp_ms;
+} hal_ppg_sample_t;
+
 int hal_ppg_register(const hal_ppg_ops_t *ops);
 int hal_ppg_init(void);
 int hal_ppg_start(void);

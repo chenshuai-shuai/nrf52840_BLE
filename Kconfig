@@ -78,6 +78,24 @@ config DRIVER_PPG_NRF
 	help
 	  Enable nRF52840 PPG driver implementation.
 
+config PPG_SPI_PROBE
+	bool "Enable GH3026 SPI probe at boot"
+	default n
+	depends on HAL_PPG
+	depends on DRIVER_PPG_NRF
+	help
+	  Run a minimal GH3026 SPI link probe during boot by calling hal_ppg_init().
+
+config PPG_GH_VERBOSE_LOG
+	bool "Enable GH3026 library verbose log"
+	default n
+	depends on HAL_PPG
+	depends on DRIVER_PPG_NRF
+	help
+	  Enable high-frequency logs inside Goodix GH3X2X demo library
+	  (for example usGotEvent/FIFO event prints). Keep disabled during
+	  normal PPG debugging to reduce RTT load and scheduling jitter.
+
 config HAL_IMU
 	bool "Enable HAL IMU"
 	default n

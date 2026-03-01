@@ -12,6 +12,12 @@
 
 LOG_MODULE_REGISTER(app_pm_test, LOG_LEVEL_INF);
 
+#if IS_ENABLED(CONFIG_PM_SERVICE_DEBUG_LOG)
+#define PM_DBG_INF(...) LOG_INF(__VA_ARGS__)
+#else
+#define PM_DBG_INF(...)
+#endif
+
 #define PM_TEST_STACK_SIZE 2048
 #define PM_TEST_PRIORITY   5
 
@@ -207,8 +213,9 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
             chg = (stat_chg_b >> 1) & 0x01;
             time_sus = stat_chg_b & 0x01;
 
-            LOG_INF("pm stat: glbl=0x%02x chg_b=0x%02x chg_dtls=%u chgin_dtls=%u chg=%u time_sus=%u",
-                    stat_glbl, stat_chg_b, chg_dtls, chgin_dtls, chg, time_sus);
+            PM_DBG_INF("pm stat: glbl=0x%02x chg_b=0x%02x chg_dtls=%u chgin_dtls=%u chg=%u time_sus=%u",
+                       stat_glbl, stat_chg_b, chg_dtls, chgin_dtls, chg, time_sus);
+            ARG_UNUSED(stat_glbl);
 
             /* LED policy on GPIO1:
              * - charging (chg=1): blink 1Hz
@@ -241,12 +248,13 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
             if (fg_read16(i2c, FG_REG_REPSOC, &raw) == 0) {
                 uint16_t soc_int = (uint16_t)(raw >> 8);
                 uint16_t soc_frac = (uint16_t)(((uint32_t)(raw & 0xFF) * 100U) / 256U);
-                LOG_INF("fg soc: %u.%02u %% (raw=0x%04x)", soc_int, soc_frac, raw);
+                PM_DBG_INF("fg soc: %u.%02u %% (raw=0x%04x)", soc_int, soc_frac, raw);
 
                 /* Estimate capacity from SOC and design capacity */
                 uint32_t soc_x100 = (uint32_t)soc_int * 100U + soc_frac;
                 uint32_t cap_est = (FG_DESIGNCAP_MAH * soc_x100) / 10000U;
-                LOG_INF("fg cap est: %u mAh (design=%u mAh)", cap_est, FG_DESIGNCAP_MAH);
+                PM_DBG_INF("fg cap est: %u mAh (design=%u mAh)", cap_est, FG_DESIGNCAP_MAH);
+                ARG_UNUSED(cap_est);
 
                 state.soc_x100 = (uint16_t)soc_x100;
             } else {
@@ -256,7 +264,7 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
             if (fg_read16(i2c, FG_REG_VCELL, &raw) == 0) {
                 /* Use fixed-point: mV = raw * 78.125uV => raw * 78125 / 1,000,000 */
                 uint32_t mv = (uint32_t)raw * 78125U / 1000000U;
-                LOG_INF("fg vcell: %u mV (raw=0x%04x)", mv, raw);
+                PM_DBG_INF("fg vcell: %u mV (raw=0x%04x)", mv, raw);
                 state.vcell_mv = (uint16_t)mv;
             } else {
                 LOG_WRN("fg vcell read failed");
@@ -266,8 +274,8 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
                 int16_t cur_raw = (int16_t)raw;
                 /* Estimate: LSB = 1.5625uV / Rsense => mA = raw * 1.5625 / Rsense(mOhm) */
                 int32_t ma = (int32_t)cur_raw * 15625 / (int32_t)FG_RSENSE_MOHM / 10000;
-                LOG_INF("fg current est: %d mA (raw=0x%04x, rsense=%u mOhm)",
-                        (int)ma, (uint16_t)cur_raw, FG_RSENSE_MOHM);
+                PM_DBG_INF("fg current est: %d mA (raw=0x%04x, rsense=%u mOhm)",
+                           (int)ma, (uint16_t)cur_raw, FG_RSENSE_MOHM);
                 state.current_ma = (int16_t)ma;
             } else {
                 LOG_WRN("fg current read failed");
@@ -275,7 +283,7 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
 
             if (fg_read16(i2c, FG_REG_REPCAP, &raw) == 0) {
                 /* Raw RepCap for reference (scaling depends on Rsense) */
-                LOG_INF("fg repcap raw: 0x%04x", raw);
+                PM_DBG_INF("fg repcap raw: 0x%04x", raw);
             } else {
                 LOG_WRN("fg repcap read failed");
             }

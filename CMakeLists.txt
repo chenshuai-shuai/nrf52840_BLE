@@ -9,6 +9,11 @@ set(APP_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_state.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/system_state.c
 )
+if(CONFIG_PPG_SPI_PROBE)
+  list(APPEND APP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_ppg_hr.c
+  )
+endif()
 
 if(CONFIG_IMU_TEST)
   list(APPEND APP_SOURCES
@@ -158,3 +163,39 @@ target_include_directories(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/Inc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/common/Inc
 )
+
+if(CONFIG_DRIVER_PPG_NRF)
+  file(GLOB GH3X2X_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/demo_kernel_code/src/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/algo_params/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/demo_algo_code/goodix_algo_call/src/*.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/demo_algo_code/goodix_algo_application/src/*.c
+  )
+  target_sources(app PRIVATE ${GH3X2X_SOURCES})
+
+  target_include_directories(app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/drv_lib
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/demo_kernel_code/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/algo_params
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/demo_algo_code/goodix_algo_call/inc
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/demo_algo_code/goodix_algo_application/inc
+  )
+
+  target_link_libraries(app PRIVATE
+    -L${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/drv_lib/gcc_M4_softfp/_build/gcc_softfp
+    -L${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/algo_lib/M4_gcc_softfp
+    -Wl,--start-group
+    libgh3x2x_drv_cortexM4l_band_gcc_softfp_agc.a
+    libgh3x2x_drv_cortexM4l_band_gcc_softfp_ecg.a
+    libgh3x2x_drv_cortexM4l_band_gcc_softfp_kernel.a
+    libgh3x2x_drv_cortexM4l_band_gcc_softfp_zip.a
+    libcortexM4_eabi-gcc_softfp_bt.a
+    libcortexM4_eabi-gcc_softfp_ecg.a
+    libcortexM4_eabi-gcc_softfp_hr.a
+    libcortexM4_eabi-gcc_softfp_hrv.a
+    libcortexM4_eabi-gcc_softfp_nadt.a
+    libcortexM4_eabi-gcc_softfp_spo2.a
+    libcortexM4_eabi-gcc_softfp_common.a
+    -Wl,--end-group
+  )
+endif()
