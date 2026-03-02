@@ -10,7 +10,7 @@
 
 LOG_MODULE_REGISTER(ppg_nrf, LOG_LEVEL_INF);
 
-#define GH3026_THREAD_STACK_SIZE 2048
+#define GH3026_THREAD_STACK_SIZE 6144
 #define GH3026_THREAD_PRIORITY   6
 
 static struct k_thread g_gh_thread;
@@ -129,6 +129,7 @@ static int ppg_nrf_start(void)
                           GH3026_THREAD_PRIORITY,
                           0,
                           K_NO_WAIT);
+    k_thread_name_set(&g_gh_thread, "gh3026_irq");
 
     g_ppg.started = true;
     LOG_INF("gh3026 sampling start (HR)");

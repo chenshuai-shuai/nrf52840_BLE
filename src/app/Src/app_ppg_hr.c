@@ -9,7 +9,7 @@
 
 LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
 
-#define APP_PPG_HR_STACK_SIZE 2048
+#define APP_PPG_HR_STACK_SIZE 3072
 #define APP_PPG_HR_PRIORITY   7
 
 static struct k_thread g_ppg_hr_thread;
