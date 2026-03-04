@@ -9,6 +9,7 @@
 #include "hal_ppg.h"
 #include "app_rtc.h"
 #include "app_imu_test.h"
+#include "app_gps.h"
 #include "app_ppg_hr.h"
 #include "app_pm_test.h"
 #include "pm_service.h"
@@ -146,6 +147,26 @@ static bool ppg_ready(void)
     return true;
 }
 
+static int gps_start(void)
+{
+#if IS_ENABLED(CONFIG_GPS_TEST)
+    app_gps_start();
+    return HAL_OK;
+#else
+    return HAL_ENOTSUP;
+#endif
+}
+
+static int gps_stop(void)
+{
+    return HAL_ENOTSUP;
+}
+
+static bool gps_ready(void)
+{
+    return true;
+}
+
 static int pm_test_start(void)
 {
 #if IS_ENABLED(CONFIG_PM_TEST)
@@ -204,6 +225,15 @@ static app_lifecycle_entry_t g_apps[APP_LC_COUNT] = {
         .ready = ppg_ready,
         .st = {.configured = false, .started = false, .ready = false, .last_error = HAL_OK}
     },
+    [APP_LC_GPS] = {
+        .name = "gps",
+        .configured = IS_ENABLED(CONFIG_GPS_TEST),
+        .enabled = IS_ENABLED(CONFIG_GPS_TEST),
+        .start = gps_start,
+        .stop = gps_stop,
+        .ready = gps_ready,
+        .st = {.configured = false, .started = false, .ready = false, .last_error = HAL_OK}
+    },
     [APP_LC_PM_TEST] = {
         .name = "pm_test",
         .configured = IS_ENABLED(CONFIG_PM_TEST),
@@ -220,6 +250,7 @@ static const app_boot_item_t g_boot_order[] = {
     {.id = APP_LC_RTC, .required = false, .deps_mask = 0},
     {.id = APP_LC_IMU, .required = false, .deps_mask = 0},
     {.id = APP_LC_PPG, .required = false, .deps_mask = BIT(APP_LC_PM)},
+    {.id = APP_LC_GPS, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_PM_TEST, .required = false, .deps_mask = BIT(APP_LC_PM)},
 };
 

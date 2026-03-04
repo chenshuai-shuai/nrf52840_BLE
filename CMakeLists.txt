@@ -23,6 +23,11 @@ if(CONFIG_IMU_TEST)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/imu_algo.c
   )
 endif()
+if(CONFIG_GPS_TEST)
+  list(APPEND APP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_gps.c
+  )
+endif()
 if(CONFIG_PM_TEST)
   list(APPEND APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_pm_test.c
