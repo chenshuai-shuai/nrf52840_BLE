@@ -12,6 +12,7 @@
 #include "app_ppg_hr.h"
 #include "app_pm_test.h"
 #include "pm_service.h"
+#include "app_bus.h"
 
 LOG_MODULE_REGISTER(app_lifecycle, LOG_LEVEL_INF);
 
@@ -281,6 +282,15 @@ int app_lifecycle_start(app_lifecycle_id_t id)
 
     e->st.started = true;
     e->st.ready = e->ready ? e->ready() : true;
+    app_event_t evt = {
+        .id = APP_EVT_APP_LIFECYCLE,
+        .timestamp_ms = (uint32_t)k_uptime_get(),
+        .data.lifecycle = {
+            .app_id = id,
+            .status = e->st,
+        },
+    };
+    (void)app_bus_publish(&evt);
     LOG_INF("app_lc started: %s ready=%d", e->name, e->st.ready ? 1 : 0);
     return HAL_OK;
 }
@@ -301,6 +311,15 @@ int app_lifecycle_stop(app_lifecycle_id_t id)
     if (ret == HAL_OK) {
         e->st.started = false;
         e->st.ready = false;
+        app_event_t evt = {
+            .id = APP_EVT_APP_LIFECYCLE,
+            .timestamp_ms = (uint32_t)k_uptime_get(),
+            .data.lifecycle = {
+                .app_id = id,
+                .status = e->st,
+            },
+        };
+        (void)app_bus_publish(&evt);
     }
     return ret;
 }

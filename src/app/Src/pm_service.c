@@ -8,6 +8,7 @@
 #include "hal_pm.h"
 #include "error.h"
 #include "rt_thread.h"
+#include "app_bus.h"
 
 LOG_MODULE_REGISTER(pm_service, LOG_LEVEL_INF);
 
@@ -192,6 +193,13 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
         next.timestamp_ms = (uint32_t)k_uptime_get();
         next.valid = 1;
         system_state_set_pm(&next);
+
+        app_event_t evt = {
+            .id = APP_EVT_PM_STATE,
+            .timestamp_ms = next.timestamp_ms,
+            .data.pm = next,
+        };
+        (void)app_bus_publish(&evt);
 
         if (IS_ENABLED(CONFIG_PM_SERVICE_DEBUG_LOG)) {
             LOG_INF("pm svc: soc=%u.%02u%% v=%umV i=%dmA chg=%u",

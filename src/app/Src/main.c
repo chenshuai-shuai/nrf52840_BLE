@@ -6,6 +6,7 @@
 #include "error.h"
 
 #include "app_lifecycle.h"
+#include "app_bus.h"
 #include "boot_tone.h"
 #include "system_state.h"
 
@@ -22,6 +23,11 @@ int main(void)
     }
 
     system_state_init();
+    ret = app_bus_start();
+    if (ret != HAL_OK) {
+        printk("app_bus_start failed: %d\n", ret);
+        return ret;
+    }
 
 #if IS_ENABLED(CONFIG_BOOT_TONE)
     boot_tone_play();

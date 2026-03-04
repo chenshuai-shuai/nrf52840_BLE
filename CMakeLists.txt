@@ -5,6 +5,7 @@ project(nrf52840_BLE)
 
 set(APP_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/main.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_bus.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_lifecycle.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_rtc.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_state.c

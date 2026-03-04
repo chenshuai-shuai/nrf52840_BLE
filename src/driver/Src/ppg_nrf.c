@@ -105,7 +105,7 @@ static int ppg_nrf_start(void)
     k_msgq_purge(&g_ppg_sample_q);
     Gh3x2xDemoStartSampling(GH3X2X_FUNCTION_HR);
     GU16 wm_before = GH3X2X_GetCurrentFifoWaterLine();
-    GS8 wm_ret = GH3X2X_FifoWatermarkThrConfig(32);
+    GS8 wm_ret = GH3X2X_FifoWatermarkThrConfig(16);
     GU16 wm_after = GH3X2X_GetCurrentFifoWaterLine();
     LOG_INF("gh3026 wm: before=%u set_ret=%d after=%u",
             (unsigned int)wm_before,
