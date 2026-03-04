@@ -21,12 +21,16 @@ extern void GH3X2X_AlgoLog(GCHAR *chLogString);
 /// log support len
 #define GH3X2X_LOG_ALGO_SUP_LEN     (128)
 
+#ifdef CONFIG_PPG_GH_VERBOSE_LOG
 #define   GH3X2X_SAMPLE_ALGO_LOG_PARAM(...)         do {\
                                                         GCHAR chDebugStr[GH3X2X_LOG_ALGO_SUP_LEN] = {0};\
                                                         snprintf(chDebugStr, GH3X2X_LOG_ALGO_SUP_LEN, \
                                                                 "[gh3x2x_algo]: "__VA_ARGS__);\
                                                         GH3X2X_AlgoLog(chDebugStr);\
                                                     } while (0)
+#else
+#define   GH3X2X_SAMPLE_ALGO_LOG_PARAM(...)
+#endif
 
 #if (__ALGO_LOG_CONFIG__)
 #define   GH3X2X_ALGO_LOG_PARAM(...)        do {\

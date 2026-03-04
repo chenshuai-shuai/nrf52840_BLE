@@ -7,6 +7,7 @@
 #include <stdint.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/sys/util.h>
 #include <zephyr/kernel.h>
 #if (__GOODIX_ALGO_CALL_MODE__)
 
@@ -33,7 +34,11 @@ __attribute__((weak)) void ppg_nrf_on_hr_result(int32_t hr_bpm, int32_t confiden
 
 void GH3X2X_AlgoLog(GCHAR *log_string)
 {
+#if IS_ENABLED(CONFIG_PPG_GH_VERBOSE_LOG)
     printk("%s\n",log_string);
+#else
+    ARG_UNUSED(log_string);
+#endif
 }
 
 /**
@@ -105,7 +110,7 @@ void GH3X2X_HrAlgorithmResultReport(STGh3x2xAlgoResult * pstAlgoResult, GU32 lub
                          (uint32_t)lubFrameId);
 
     GU32 now_ms = (GU32)k_uptime_get();
-    if ((now_ms - s_hr_log_ms) >= 5000U) {
+    if (IS_ENABLED(CONFIG_PPG_GH_VERBOSE_LOG) && ((now_ms - s_hr_log_ms) >= 5000U)) {
         printk("[gh3x2x_algo]: hr_cb cnt=%u upd=%u hr=%d conf=%d snr=%d frame=%u\n",
                (unsigned int)s_hr_cb_cnt,
                (unsigned int)pstAlgoResult->uchUpdateFlag,

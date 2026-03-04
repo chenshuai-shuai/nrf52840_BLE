@@ -11,7 +11,7 @@ LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
 
 #define APP_PPG_HR_STACK_SIZE 3072
 #define APP_PPG_HR_PRIORITY   7
-#define APP_PPG_HR_WARMUP_MS  20000U
+#define APP_PPG_HR_WARMUP_MS  6000U
 #define APP_PPG_HR_MIN_BPM    40
 #define APP_PPG_HR_MAX_BPM    220
 #define APP_PPG_HR_ACQ_MIN_BPM 45
@@ -23,13 +23,16 @@ LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
 #define APP_PPG_HR_STABLE_D   3
 #define APP_PPG_HR_LOCK_BPM_MAX   45
 #define APP_PPG_HR_LOCK_CONF_MIN  90
-#define APP_PPG_HR_LOCK_HOLD_N    20
-#define APP_PPG_HR_RECOVERY_GAP_MS 30000U
+#define APP_PPG_HR_LOCK_HOLD_N    8
+#define APP_PPG_HR_RECOVERY_GAP_MS 8000U
 #define APP_PPG_HR_HIGH_LOCK_BPM_MIN   160
 #define APP_PPG_HR_HIGH_LOCK_CONF_MAX  80
-#define APP_PPG_HR_HIGH_LOCK_HOLD_N    12
-#define APP_PPG_HR_NO_VALID_RECOVERY_MS 45000U
-#define APP_PPG_HR_ACQ_RETRY_GAP_MS    12000U
+#define APP_PPG_HR_HIGH_LOCK_HOLD_N    8
+#define APP_PPG_HR_NO_VALID_RECOVERY_MS 12000U
+#define APP_PPG_HR_ACQ_RETRY_GAP_MS    5000U
+#define APP_PPG_HR_FAST_LOCK_MIN_MS    3000U
+#define APP_PPG_HR_FAST_LOCK_CONF      96
+#define APP_PPG_HR_FAST_LOCK_N         2U
 
 typedef enum {
     APP_PPG_MODE_ACQUIRE = 0,
@@ -38,6 +41,25 @@ typedef enum {
 
 static struct k_thread g_ppg_hr_thread;
 RT_THREAD_STACK_DEFINE(g_ppg_hr_stack, APP_PPG_HR_STACK_SIZE);
+static struct k_mutex g_ppg_hr_state_lock;
+static app_ppg_hr_state_t g_ppg_hr_state = APP_PPG_HR_ST_NOT_READY;
+static hal_ppg_sample_t g_ppg_hr_latest = {0};
+static bool g_ppg_hr_latest_valid;
+
+static void ppg_hr_set_state(app_ppg_hr_state_t st)
+{
+    k_mutex_lock(&g_ppg_hr_state_lock, K_FOREVER);
+    g_ppg_hr_state = st;
+    k_mutex_unlock(&g_ppg_hr_state_lock);
+}
+
+static void ppg_hr_set_latest(const hal_ppg_sample_t *s)
+{
+    k_mutex_lock(&g_ppg_hr_state_lock, K_FOREVER);
+    g_ppg_hr_latest = *s;
+    g_ppg_hr_latest_valid = true;
+    k_mutex_unlock(&g_ppg_hr_state_lock);
+}
 
 static bool hr_is_physically_valid(const hal_ppg_sample_t *s)
 {
@@ -68,6 +90,7 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
     bool has_candidate = false;
     int64_t last_recover_ms = 0;
     int64_t last_valid_ms = start_ms;
+    ppg_hr_set_state(APP_PPG_HR_ST_LOCKING);
 
     while (1) {
         hal_ppg_sample_t sample;
@@ -103,11 +126,17 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                 has_candidate = false;
             }
 
+            uint32_t elapsed_ms = (uint32_t)(now_ms - start_ms);
             bool lock_candidate = warmup_done &&
                                   valid &&
                                   sample.confidence >= APP_PPG_HR_CONF_LOCK &&
                                   sample.hr_bpm >= APP_PPG_HR_ACQ_MIN_BPM &&
                                   sample.hr_bpm <= APP_PPG_HR_ACQ_MAX_BPM;
+            bool fast_lock_candidate = (elapsed_ms >= APP_PPG_HR_FAST_LOCK_MIN_MS) &&
+                                       valid &&
+                                       sample.confidence >= APP_PPG_HR_FAST_LOCK_CONF &&
+                                       sample.hr_bpm >= APP_PPG_HR_ACQ_MIN_BPM &&
+                                       sample.hr_bpm <= APP_PPG_HR_ACQ_MAX_BPM;
 
             if (lock_candidate) {
                 if (!has_candidate) {
@@ -123,10 +152,15 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                     last_candidate_hr = sample.hr_bpm;
                 }
 
-                if (mode == APP_PPG_MODE_ACQUIRE && stable_cnt >= 4U) {
+                if (mode == APP_PPG_MODE_ACQUIRE &&
+                    (stable_cnt >= 4U || (fast_lock_candidate && stable_cnt >= APP_PPG_HR_FAST_LOCK_N))) {
                     mode = APP_PPG_MODE_TRACK;
-                    LOG_INF("ppg hr: lock acquired (hr=%d conf=%d), start output",
-                            (int)sample.hr_bpm, (int)sample.confidence);
+                    ppg_hr_set_state(APP_PPG_HR_ST_TRACKING);
+                    LOG_INF("ppg hr: lock acquired (hr=%d conf=%d stable=%u elapsed=%ums), start output",
+                            (int)sample.hr_bpm,
+                            (int)sample.confidence,
+                            (unsigned int)stable_cnt,
+                            (unsigned int)elapsed_ms);
                 }
             } else {
                 if (mode == APP_PPG_MODE_ACQUIRE) {
@@ -178,6 +212,7 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                         start_ms = k_uptime_get();
                         warmup_done_logged = false;
                         mode = APP_PPG_MODE_ACQUIRE;
+                        ppg_hr_set_state(APP_PPG_HR_ST_LOCKING);
                         filtered_cnt = 0;
                         stable_cnt = 0;
                         has_candidate = false;
@@ -214,6 +249,7 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                    (int)sample.snr,
                    (unsigned int)sample.frame_id,
                    (unsigned int)sample.timestamp_ms);
+            ppg_hr_set_latest(&sample);
             low_lock_cnt = 0;
             high_lock_cnt = 0;
             last_valid_ms = k_uptime_get();
@@ -247,6 +283,10 @@ int app_ppg_hr_start(void)
         return ret;
     }
 
+    k_mutex_init(&g_ppg_hr_state_lock);
+    g_ppg_hr_state = APP_PPG_HR_ST_NOT_READY;
+    g_ppg_hr_latest_valid = false;
+
     ret = hal_ppg_start();
     if (ret != HAL_OK) {
         LOG_ERR("gh3026 start failed: %d", ret);
@@ -268,4 +308,30 @@ int app_ppg_hr_start(void)
     started = true;
     LOG_INF("gh3026 app start");
     return HAL_OK;
+}
+
+app_ppg_hr_state_t app_ppg_hr_get_state(void)
+{
+    app_ppg_hr_state_t st;
+    k_mutex_lock(&g_ppg_hr_state_lock, K_FOREVER);
+    st = g_ppg_hr_state;
+    k_mutex_unlock(&g_ppg_hr_state_lock);
+    return st;
+}
+
+int app_ppg_hr_get_latest_sample(hal_ppg_sample_t *out)
+{
+    if (out == NULL) {
+        return HAL_EINVAL;
+    }
+
+    int ret = HAL_OK;
+    k_mutex_lock(&g_ppg_hr_state_lock, K_FOREVER);
+    if (!g_ppg_hr_latest_valid) {
+        ret = HAL_ENODEV;
+    } else {
+        *out = g_ppg_hr_latest;
+    }
+    k_mutex_unlock(&g_ppg_hr_state_lock);
+    return ret;
 }
