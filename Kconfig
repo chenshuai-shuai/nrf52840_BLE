@@ -292,6 +292,14 @@ config PM_TEST
 	help
 	  Enable PMIC test thread for driver validation.
 
+config GPS_TEST
+	bool "Enable GPS test thread"
+	default n
+	depends on HAL_GPS
+	depends on DRIVER_GPS_NRF
+	help
+	  Enable GPS application thread for LC76G UART validation.
+
 config PM_SERVICE
 	bool "Enable PMIC service thread"
 	default y
