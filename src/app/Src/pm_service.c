@@ -35,6 +35,9 @@ LOG_MODULE_REGISTER(pm_service, LOG_LEVEL_INF);
 
 static struct k_thread g_pm_svc_thread;
 RT_THREAD_STACK_DEFINE(g_pm_svc_stack, PM_SVC_STACK_SIZE);
+static bool g_pm_svc_started;
+static volatile bool g_pm_svc_ready;
+static volatile int g_pm_svc_last_error;
 
 static int fg_read16(const struct device *i2c, uint8_t reg, uint16_t *val)
 {
@@ -118,6 +121,8 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
     const struct device *i2c = DEVICE_DT_GET(DT_NODELABEL(i2c0));
     if (!device_is_ready(i2c)) {
         LOG_ERR("pm svc: i2c0 not ready");
+        g_pm_svc_last_error = HAL_ENODEV;
+        g_pm_svc_ready = false;
         return;
     }
 
@@ -125,6 +130,7 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
     int ret = hal_pm_init();
     while (ret != HAL_OK) {
         LOG_WRN("pm svc: pm init retry: %d", ret);
+        g_pm_svc_last_error = ret;
         k_msleep(200);
         ret = hal_pm_init();
     }
@@ -145,6 +151,11 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
     ret = hal_pm_set_mode(HAL_PM_MODE_DEFAULT);
     if (ret != HAL_OK) {
         LOG_ERR("pm svc: pm default config failed: %d", ret);
+        g_pm_svc_last_error = ret;
+        g_pm_svc_ready = false;
+    } else {
+        g_pm_svc_last_error = HAL_OK;
+        g_pm_svc_ready = true;
     }
 
     /* Fuel-gauge init (POR only) */
@@ -192,11 +203,10 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
     }
 }
 
-void pm_service_start(void)
+int pm_service_start(void)
 {
-    static bool started;
-    if (started) {
-        return;
+    if (g_pm_svc_started) {
+        return HAL_OK;
     }
 
     int ret = rt_thread_start(&g_pm_svc_thread,
@@ -208,8 +218,23 @@ void pm_service_start(void)
                               "pm_service");
     if (ret != 0) {
         LOG_ERR("pm svc: thread start failed: %d", ret);
-        return;
+        g_pm_svc_last_error = HAL_EIO;
+        g_pm_svc_ready = false;
+        return HAL_EIO;
     }
 
-    started = true;
+    g_pm_svc_started = true;
+    g_pm_svc_ready = false;
+    g_pm_svc_last_error = 0;
+    return HAL_OK;
+}
+
+bool pm_service_is_ready(void)
+{
+    return g_pm_svc_ready;
+}
+
+int pm_service_last_error(void)
+{
+    return (int)g_pm_svc_last_error;
 }

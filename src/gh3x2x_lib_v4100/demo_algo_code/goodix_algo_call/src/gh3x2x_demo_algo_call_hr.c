@@ -22,6 +22,22 @@ goodix_hba_ret goodix_hba_init_func(GU32 fs)
     GCHAR uchHrVersion[100] = {0};
     goodix_hba_version((uint8_t*)uchHrVersion);    
     GH3X2X_HbaAlgoChnlMapDefultSet();
+
+    /* Runtime guard for channel map:
+     * Some custom virtual-reg tables may set HR channel count to 2,
+     * which can cause long-term wrong locking (e.g. ~32-40bpm).
+     * Force 4-channel default mapping for this hardware baseline.
+     */
+    if (g_stHbaAlgoChnlMap.uchNum < __HR_ALGORITHM_SUPPORT_CHNL_NUM__) {
+        g_stHbaAlgoChnlMap.uchFlag = 1;
+        g_stHbaAlgoChnlMap.uchNum = __HR_ALGORITHM_SUPPORT_CHNL_NUM__;
+        for (GU8 cnt = 0; cnt < __HR_ALGORITHM_SUPPORT_CHNL_NUM__; cnt++) {
+            g_stHbaAlgoChnlMap.uchAlgoChnlMap[ALGO_GREEN_CHNL_POS + cnt] = cnt;
+        }
+        GH3X2X_ALGO_LOG_PARAM("[%s]:force hr channel map to %d channels\r\n",
+                              __FUNCTION__,
+                              g_stHbaAlgoChnlMap.uchNum);
+    }
     
     GH3X2X_ALGO_LOG_PARAM("hba algorithm version : %s\r\n", uchHrVersion);
     GH3X2X_ALGO_LOG_PARAM("hba algorithm legal chnl num : %d\r\n", g_stHbaAlgoChnlMap.uchNum);
