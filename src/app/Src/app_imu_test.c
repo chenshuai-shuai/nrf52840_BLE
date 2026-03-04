@@ -5,6 +5,7 @@
 #include "hal_imu.h"
 #include "error.h"
 #include "rt_thread.h"
+#include "imu_algo.h"
 
 LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
 
@@ -17,6 +18,7 @@ LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
 
 #define IMU_CALIB_SAMPLES 200
 #define IMU_LOG_EVERY_N  1
+#define IMU_ACTION_LOG_EVERY_N 10
 
 static struct k_thread g_imu_thread;
 RT_THREAD_STACK_DEFINE(g_imu_stack, IMU_TEST_STACK_SIZE);
@@ -36,6 +38,11 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
     }
 
     LOG_INF("imu test: start sampling (INT1, 100Hz)");
+    ret = imu_algo_init();
+    if (ret != HAL_OK) {
+        LOG_ERR("imu test: imu_algo_init failed: %d", ret);
+        return;
+    }
 
     uint32_t sample_cnt = 0;
     uint32_t err_cnt = 0;
@@ -61,8 +68,10 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
     int32_t gy_f = 0;
     int32_t gz_f = 0;
     bool header_printed = false;
+    imu_action_t last_action = IMU_ACTION_UNKNOWN;
     int64_t rate_t0 = k_uptime_get();
     uint32_t rate_cnt = 0;
+    uint32_t action_cnt = 0;
 
     while (1) {
         imu_sample_t s = {0};
@@ -143,6 +152,31 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
                     s.accel_x, s.accel_y, s.accel_z,
                     s.gyro_x, s.gyro_y, s.gyro_z,
                     s.temp, t_int, t_frac);
+        }
+
+        imu_algo_input_t algo_in = {
+            .accel_x_lsb = ax_f,
+            .accel_y_lsb = ay_f,
+            .accel_z_lsb = az_f,
+            .gyro_x_lsb = gx_f,
+            .gyro_y_lsb = gy_f,
+            .gyro_z_lsb = gz_f,
+            .temp_centi_deg = t_centi,
+            .timestamp_ms = (uint32_t)k_uptime_get(),
+            .dt_ms = 10U,
+        };
+        imu_algo_output_t algo_out = {0};
+        ret = imu_algo_process(&algo_in, &algo_out);
+        if (ret == HAL_OK && algo_out.valid) {
+            action_cnt++;
+            if ((algo_out.action != last_action) ||
+                ((action_cnt % IMU_ACTION_LOG_EVERY_N) == 0U)) {
+                LOG_INF("imu_action,seq=%u,action=%s,conf=%u",
+                        sample_cnt,
+                        imu_action_name(algo_out.action),
+                        algo_out.confidence);
+                last_action = algo_out.action;
+            }
         }
     }
 }

@@ -20,6 +20,7 @@ endif()
 if(CONFIG_IMU_TEST)
   list(APPEND APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_imu_test.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/imu_algo.c
   )
 endif()
 if(CONFIG_PM_TEST)
