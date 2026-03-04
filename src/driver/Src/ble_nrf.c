@@ -158,8 +158,10 @@ static const struct bt_gatt_attr *g_tx_attr = &g_ble_svc.attrs[4];
 static void att_mtu_updated(struct bt_conn *conn, uint16_t tx, uint16_t rx)
 {
     ARG_UNUSED(conn);
-    g_att_mtu = tx;
-    LOG_INF("BLE ATT MTU updated: tx=%u rx=%u", (unsigned)tx, (unsigned)rx);
+    /* Use effective payload MTU supported by both sides. */
+    g_att_mtu = MIN(tx, rx);
+    LOG_INF("BLE ATT MTU updated: tx=%u rx=%u eff=%u",
+            (unsigned)tx, (unsigned)rx, (unsigned)g_att_mtu);
 }
 
 static struct bt_gatt_cb g_gatt_cb = {

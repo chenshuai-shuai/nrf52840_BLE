@@ -14,6 +14,8 @@ LOG_MODULE_REGISTER(pm_service, LOG_LEVEL_INF);
 
 #define PM_SVC_STACK_SIZE 2048
 #define PM_SVC_PRIORITY   7
+#define PM_SVC_REAPPLY_PERIOD_MS 15000U
+#define PM_SVC_STATUS_ERR_RETRY_MAX 3U
 
 #define FG_ADDR            0x36
 #define FG_REG_STATUS      0x00
@@ -162,15 +164,62 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
     /* Fuel-gauge init (POR only) */
     fg_init_default(i2c);
 
+    uint64_t led_last_toggle_ms = 0;
+    bool led_on = false;
+    uint32_t status_err_cnt = 0;
+    uint64_t last_reapply_ms = k_uptime_get();
+    uint64_t last_led_diag_ms = k_uptime_get();
+
     while (1) {
         pm_state_t next = {0};
         int status = 0;
         if (hal_pm_get_status(&status) == HAL_OK) {
+            status_err_cnt = 0;
             uint8_t stat_chg_b = (uint8_t)(status & 0xFF);
             next.chg_dtls = (stat_chg_b >> 4) & 0x0F;
             next.chgin_dtls = (stat_chg_b >> 2) & 0x03;
             next.chg = (stat_chg_b >> 1) & 0x01;
             next.time_sus = stat_chg_b & 0x01;
+
+            /* Charge LED policy on GPIO1 (active-low):
+             * - charging: blink 1Hz
+             * - charge done (chg_dtls=8/9): steady on
+             * - otherwise: off
+             */
+            uint64_t now_ms = k_uptime_get();
+            bool input_present = (next.chgin_dtls == 0x03U);
+            bool charge_done = ((next.chg_dtls == 8U) || (next.chg_dtls == 9U));
+
+            if (charge_done) {
+                led_on = true;
+            } else if (next.chg || input_present) {
+                if ((now_ms - led_last_toggle_ms) >= 500U) {
+                    led_on = !led_on;
+                    led_last_toggle_ms = now_ms;
+                }
+            } else {
+                led_on = false;
+            }
+            int led_ret = hal_pm_set_gpio1(led_on ? 0 : 1);
+            if (led_ret != HAL_OK) {
+                LOG_WRN("pm svc: gpio1 set failed: %d", led_ret);
+            }
+            if ((now_ms - last_led_diag_ms) >= 5000U) {
+                LOG_DBG("pm led: chg_dtls=%u chgin_dtls=%u chg=%u led=%u",
+                        (unsigned int)next.chg_dtls,
+                        (unsigned int)next.chgin_dtls,
+                        (unsigned int)next.chg,
+                        led_on ? 1U : 0U);
+                last_led_diag_ms = now_ms;
+            }
+        } else {
+            status_err_cnt++;
+            if (status_err_cnt >= PM_SVC_STATUS_ERR_RETRY_MAX) {
+                LOG_WRN("pm svc: status read unstable, re-apply default mode");
+                (void)hal_pm_set_mode(HAL_PM_MODE_DEFAULT);
+                status_err_cnt = 0;
+                last_reapply_ms = k_uptime_get();
+            }
         }
 
         uint16_t raw = 0;
@@ -205,6 +254,15 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
             LOG_INF("pm svc: soc=%u.%02u%% v=%umV i=%dmA chg=%u",
                     next.soc_x100 / 100, next.soc_x100 % 100,
                     next.vcell_mv, next.current_ma, next.chg);
+        }
+
+        /* Power rail keep-alive: periodically re-apply default PM mode so
+         * rails remain configured even if PMIC state drifts after source switch.
+         */
+        uint64_t now_ms = k_uptime_get();
+        if ((now_ms - last_reapply_ms) >= PM_SVC_REAPPLY_PERIOD_MS) {
+            (void)hal_pm_set_mode(HAL_PM_MODE_DEFAULT);
+            last_reapply_ms = now_ms;
         }
 
         k_msleep(CONFIG_PM_SERVICE_INTERVAL_MS);

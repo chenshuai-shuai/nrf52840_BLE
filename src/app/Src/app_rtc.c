@@ -14,6 +14,7 @@
 
 #include <zephyr/logging/log.h>
 #include "rt_thread.h"
+#include "app_uplink_service.h"
 
 LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_INF);
 
@@ -101,7 +102,11 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
         mic_drop_queue();
         if (hal_ble_is_ready()) {
             const char ready[] = "NRF_READY";
-            (void)hal_ble_send(ready, sizeof(ready) - 1, 0);
+            (void)app_uplink_publish(APP_DATA_PART_CTRL,
+                                     APP_UPLINK_PRIO_HIGH,
+                                     ready,
+                                     sizeof(ready) - 1,
+                                     (uint32_t)k_uptime_get());
             g_nrf_ready_sent = true;
             LOG_INF("CTRL NRF_READY sent");
         }
@@ -341,7 +346,11 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
         }
         const char done[] = "PLAY_DONE";
         if (hal_ble_is_ready()) {
-            (void)hal_ble_send(done, sizeof(done) - 1, 0);
+            (void)app_uplink_publish(APP_DATA_PART_CTRL,
+                                     APP_UPLINK_PRIO_HIGH,
+                                     done,
+                                     sizeof(done) - 1,
+                                     (uint32_t)k_uptime_get());
         }
         if (!DOWNLINK_TEST) {
             app_state_set(AUDIO_MODE_UPLOAD);
@@ -428,7 +437,11 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             size_t used = k_msgq_num_used_get(&g_spk_frame_q);
             if (used <= SPK_BUF_LOW_WATER && hal_ble_is_ready()) {
                 const char low[] = "BUF_LOW";
-                (void)hal_ble_send(low, sizeof(low) - 1, 0);
+                (void)app_uplink_publish(APP_DATA_PART_CTRL,
+                                         APP_UPLINK_PRIO_HIGH,
+                                         low,
+                                         sizeof(low) - 1,
+                                         (uint32_t)k_uptime_get());
                 g_spk_buf_full = false;
             }
         }
@@ -457,7 +470,11 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
         if (eos_pending && k_msgq_num_used_get(&g_spk_frame_q) == 0 && pending_buf == NULL) {
             const char done[] = "PLAY_DONE";
             if (hal_ble_is_ready()) {
-                (void)hal_ble_send(done, sizeof(done) - 1, 0);
+                (void)app_uplink_publish(APP_DATA_PART_CTRL,
+                                         APP_UPLINK_PRIO_HIGH,
+                                         done,
+                                         sizeof(done) - 1,
+                                         (uint32_t)k_uptime_get());
             }
             eos_pending = false;
             g_spk_accept_audio = false;
@@ -661,8 +678,6 @@ static void ble_test_entry(void *p1, void *p2, void *p3)
 #define MIC_UPLOAD_PRIO 5
 
 #define MIC_FRAME_Q_LEN 16
-#define MIC_MTU_MIN 23
-
 static struct k_thread g_mic_test_thread;
 RT_THREAD_STACK_DEFINE(g_mic_test_stack, MIC_TEST_STACK_SIZE);
 
@@ -682,11 +697,11 @@ static int audio_send_frame(const uint8_t *pcm, size_t len, uint16_t seq)
     if (pcm == NULL || len == 0) {
         return HAL_EINVAL;
     }
-    if (!hal_ble_is_ready()) {
-        return HAL_EBUSY;
-    }
 
     int mtu = hal_ble_get_mtu();
+    if (mtu < 23) {
+        mtu = 23;
+    }
     size_t payload_max = AUDIO_PAYLOAD_MAX;
     if (mtu > 3) {
         size_t att_payload = (size_t)(mtu - 3);
@@ -833,7 +848,8 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
             goto log_stats;
         }
 
-        if (!hal_ble_is_ready() || hal_ble_get_mtu() < MIC_MTU_MIN) {
+        /* Real-time path: do not backlog audio before BLE notify channel is ready. */
+        if (!hal_ble_is_ready() || hal_ble_get_mtu() < 23) {
             frames_drop++;
             (void)hal_mic_release(msg.buf);
             goto log_stats;
@@ -876,21 +892,8 @@ static void mic_drop_queue(void)
 
 static int ble_ensure_started(void)
 {
-#if defined(CONFIG_MIC_TEST) || defined(CONFIG_SPK_STREAM)
-    int ret = hal_ble_init();
-    if (ret != HAL_OK) {
-        LOG_ERR("hal_ble_init failed: %d", ret);
-        return ret;
-    }
-    ret = hal_ble_start();
-    if (ret != HAL_OK) {
-        LOG_ERR("hal_ble_start failed: %d", ret);
-        return ret;
-    }
+    /* BLE init/start is centralized in app_uplink_service. */
     return HAL_OK;
-#else
-    return HAL_OK;
-#endif
 }
 
 void app_rtc_init(void)

@@ -8,6 +8,7 @@
 #include "rt_thread.h"
 #include "system_state.h"
 #include "app_bus.h"
+#include "app_uplink_service.h"
 #include "gh3x2x_demo_algo_call.h"
 #include "goodix_hba.h"
 
@@ -287,7 +288,7 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
 
                 filtered_cnt++;
                 if ((filtered_cnt % 20U) == 0U) {
-                    LOG_INF("ppg hr: filtering (mode=%d warmup=%d hr=%d conf=%d stable=%u cnt=%u)",
+                    LOG_DBG("ppg hr: filtering (mode=%d warmup=%d hr=%d conf=%d stable=%u cnt=%u)",
                             (int)mode,
                             warmup_done ? 1 : 0,
                             (int)sample.hr_bpm,
@@ -320,6 +321,29 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                 .data.ppg = sample,
             };
             (void)app_bus_publish(&evt);
+
+            struct __packed {
+                uint8_t ver;
+                uint8_t type;
+                int16_t hr_bpm;
+                int16_t conf;
+                int16_t snr;
+                uint32_t frame_id;
+                uint32_t ts_ms;
+            } ppg_pkt = {
+                .ver = 1,
+                .type = 1,
+                .hr_bpm = (int16_t)sample.hr_bpm,
+                .conf = (int16_t)sample.confidence,
+                .snr = (int16_t)sample.snr,
+                .frame_id = sample.frame_id,
+                .ts_ms = sample.timestamp_ms,
+            };
+            (void)app_uplink_publish(APP_DATA_PART_PPG,
+                                     APP_UPLINK_PRIO_NORMAL,
+                                     &ppg_pkt,
+                                     sizeof(ppg_pkt),
+                                     ppg_pkt.ts_ms);
             low_lock_cnt = 0;
             high_lock_cnt = 0;
             last_valid_ms = now_ms;
@@ -329,7 +353,7 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
             timeout_cnt++;
             int64_t now_ms = k_uptime_get();
             if ((now_ms - last_timeout_log_ms) >= 5000) {
-                LOG_INF("ppg hr: waiting result, queue timeout cnt=%u",
+                LOG_DBG("ppg hr: waiting result, queue timeout cnt=%u",
                         (unsigned int)timeout_cnt);
                 last_timeout_log_ms = now_ms;
             }

@@ -64,7 +64,7 @@ static void gh3026_irq_worker(void *a, void *b, void *c)
         }
 
         int64_t now_ms = k_uptime_get();
-        if ((now_ms - last_log_ms) >= 1000) {
+        if ((now_ms - last_log_ms) >= 3000) {
             LOG_INF("gh3026 run: irq_count=%u int_flag=%u",
                     (unsigned int)g_ppg.irq_count,
                     (unsigned int)g_uchGh3x2xIntCallBackIsCalled);

@@ -9,6 +9,7 @@ extern "C" {
 
 typedef enum {
     APP_LC_PM = 0,
+    APP_LC_UPLINK,
     APP_LC_RTC,
     APP_LC_IMU,
     APP_LC_PPG,

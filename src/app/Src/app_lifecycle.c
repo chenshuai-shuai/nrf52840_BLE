@@ -13,6 +13,7 @@
 #include "app_pm_test.h"
 #include "pm_service.h"
 #include "app_bus.h"
+#include "app_uplink_service.h"
 
 LOG_MODULE_REGISTER(app_lifecycle, LOG_LEVEL_INF);
 
@@ -91,6 +92,25 @@ static int rtc_start(void)
 #else
     return HAL_ENOTSUP;
 #endif
+}
+
+static int uplink_start(void)
+{
+#if IS_ENABLED(CONFIG_HAL_BLE) && IS_ENABLED(CONFIG_DRIVER_BLE_NRF) && IS_ENABLED(CONFIG_BT)
+    return app_uplink_service_start();
+#else
+    return HAL_ENOTSUP;
+#endif
+}
+
+static int uplink_stop(void)
+{
+    return HAL_ENOTSUP;
+}
+
+static bool uplink_ready(void)
+{
+    return app_uplink_service_is_ready();
 }
 
 static int rtc_stop(void)
@@ -186,6 +206,19 @@ static app_lifecycle_entry_t g_apps[APP_LC_COUNT] = {
         .ready = rtc_ready,
         .st = {.configured = false, .started = false, .ready = false, .last_error = HAL_OK}
     },
+    [APP_LC_UPLINK] = {
+        .name = "uplink",
+        .configured = IS_ENABLED(CONFIG_HAL_BLE) &&
+                      IS_ENABLED(CONFIG_DRIVER_BLE_NRF) &&
+                      IS_ENABLED(CONFIG_BT),
+        .enabled = IS_ENABLED(CONFIG_HAL_BLE) &&
+                   IS_ENABLED(CONFIG_DRIVER_BLE_NRF) &&
+                   IS_ENABLED(CONFIG_BT),
+        .start = uplink_start,
+        .stop = uplink_stop,
+        .ready = uplink_ready,
+        .st = {.configured = false, .started = false, .ready = false, .last_error = HAL_OK}
+    },
     [APP_LC_IMU] = {
         .name = "imu",
         .configured = IS_ENABLED(CONFIG_IMU_TEST),
@@ -217,7 +250,8 @@ static app_lifecycle_entry_t g_apps[APP_LC_COUNT] = {
 
 static const app_boot_item_t g_boot_order[] = {
     {.id = APP_LC_PM, .required = true,  .deps_mask = 0},
-    {.id = APP_LC_RTC, .required = false, .deps_mask = 0},
+    {.id = APP_LC_UPLINK, .required = false, .deps_mask = BIT(APP_LC_PM)},
+    {.id = APP_LC_RTC, .required = false, .deps_mask = BIT(APP_LC_UPLINK)},
     {.id = APP_LC_IMU, .required = false, .deps_mask = 0},
     {.id = APP_LC_PPG, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_PM_TEST, .required = false, .deps_mask = BIT(APP_LC_PM)},

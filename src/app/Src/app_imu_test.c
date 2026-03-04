@@ -6,6 +6,7 @@
 #include "error.h"
 #include "rt_thread.h"
 #include "imu_algo.h"
+#include "app_uplink_service.h"
 
 LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
 
@@ -17,8 +18,10 @@ LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
 #define IMU_TEMP_LSB_PER_C_X100 13248
 
 #define IMU_CALIB_SAMPLES 200
-#define IMU_LOG_EVERY_N  1
-#define IMU_ACTION_LOG_EVERY_N 10
+#define IMU_LOG_EVERY_N  200
+#define IMU_ACTION_LOG_EVERY_N 100
+#define IMU_RATE_LOG_PERIOD_MS 5000
+#define IMU_UPLINK_EVERY_N 20
 
 static struct k_thread g_imu_thread;
 RT_THREAD_STACK_DEFINE(g_imu_stack, IMU_TEST_STACK_SIZE);
@@ -72,6 +75,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
     int64_t rate_t0 = k_uptime_get();
     uint32_t rate_cnt = 0;
     uint32_t action_cnt = 0;
+    int64_t last_action_log_ms = 0;
 
     while (1) {
         imu_sample_t s = {0};
@@ -79,7 +83,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         if (ret != HAL_OK) {
             if (ret == HAL_EBUSY) {
                 timeout_cnt++;
-                if ((timeout_cnt % 5U) == 0U) {
+                if ((timeout_cnt % 30U) == 0U) {
                     LOG_WRN("imu test: waiting for DRDY (timeouts=%u)", timeout_cnt);
                 }
                 continue;
@@ -93,7 +97,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         rate_cnt++;
 
         int64_t now = k_uptime_get();
-        if ((now - rate_t0) >= 1000) {
+        if ((now - rate_t0) >= IMU_RATE_LOG_PERIOD_MS) {
             uint32_t elapsed_ms = (uint32_t)(now - rate_t0);
             uint32_t sps = (elapsed_ms > 0U) ? (rate_cnt * 1000U / elapsed_ms) : 0U;
             LOG_INF("imu_rate,sps=%u (samples=%u, ms=%u)", sps, rate_cnt, elapsed_ms);
@@ -169,13 +173,41 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         ret = imu_algo_process(&algo_in, &algo_out);
         if (ret == HAL_OK && algo_out.valid) {
             action_cnt++;
-            if ((algo_out.action != last_action) ||
-                ((action_cnt % IMU_ACTION_LOG_EVERY_N) == 0U)) {
+            int64_t act_now = k_uptime_get();
+            bool action_changed = (algo_out.action != last_action);
+            bool periodic_log = ((action_cnt % IMU_ACTION_LOG_EVERY_N) == 0U);
+            bool changed_log_allowed = action_changed &&
+                                       ((act_now - last_action_log_ms) >= 1000);
+            if (periodic_log || changed_log_allowed) {
                 LOG_INF("imu_action,seq=%u,action=%s,conf=%u",
                         sample_cnt,
                         imu_action_name(algo_out.action),
                         algo_out.confidence);
                 last_action = algo_out.action;
+                last_action_log_ms = act_now;
+            }
+
+            if (action_changed || ((sample_cnt % IMU_UPLINK_EVERY_N) == 0U)) {
+                struct __packed {
+                    uint8_t ver;
+                    uint8_t type;
+                    uint16_t seq;
+                    uint8_t action;
+                    uint8_t conf;
+                    uint32_t ts_ms;
+                } imu_pkt = {
+                    .ver = 1,
+                    .type = 2,
+                    .seq = (uint16_t)(sample_cnt & 0xFFFFU),
+                    .action = (uint8_t)algo_out.action,
+                    .conf = algo_out.confidence,
+                    .ts_ms = (uint32_t)act_now,
+                };
+                (void)app_uplink_publish(APP_DATA_PART_IMU,
+                                         APP_UPLINK_PRIO_LOW,
+                                         &imu_pkt,
+                                         sizeof(imu_pkt),
+                                         imu_pkt.ts_ms);
             }
         }
     }
