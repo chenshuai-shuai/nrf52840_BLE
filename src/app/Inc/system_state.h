@@ -27,11 +27,23 @@ typedef struct {
     uint8_t valid;
 } ppg_state_t;
 
+typedef struct {
+    double lat_deg;
+    double lon_deg;
+    float speed_kmh;
+    uint8_t fix_valid;
+    uint8_t sats;
+    uint32_t timestamp_ms;
+    uint8_t valid;
+} gps_state_t;
+
 void system_state_init(void);
 void system_state_set_pm(const pm_state_t *state);
 int system_state_get_pm(pm_state_t *out);
 void system_state_set_ppg(const ppg_state_t *state);
 int system_state_get_ppg(ppg_state_t *out);
+void system_state_set_gps(const gps_state_t *state);
+int system_state_get_gps(gps_state_t *out);
 
 #ifdef __cplusplus
 }

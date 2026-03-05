@@ -14,6 +14,14 @@ typedef struct {
     int (*read)(void *buf, size_t len, int timeout_ms);
 } hal_gps_ops_t;
 
+#define HAL_GPS_PACKET_MAX_LEN 128
+
+typedef struct {
+    char sentence[HAL_GPS_PACKET_MAX_LEN];
+    uint16_t len;
+    uint32_t timestamp_ms;
+} hal_gps_packet_t;
+
 int hal_gps_register(const hal_gps_ops_t *ops);
 int hal_gps_init(void);
 int hal_gps_start(void);
