@@ -23,6 +23,9 @@ LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_INF);
 #define AUDIO_PKT_MAGIC1 0x5A
 #define AUDIO_PAYLOAD_MAX 200
 #define AUDIO_MAX_FRAGS 30
+#define AUDIO_CODEC_PCM16_LE 1
+#define AUDIO_CODEC_IMA_ADPCM_8K 2
+#define AUDIO_CODEC_HDR_LEN 8
 #endif
 
 #ifndef DOWNLINK_TEST
@@ -37,6 +40,126 @@ struct audio_pkt_hdr {
     uint8_t frag_cnt;
     uint16_t payload_len;
 } __packed;
+
+static const int g_ima_step_table[89] = {
+    7, 8, 9, 10, 11, 12, 13, 14, 16, 17,
+    19, 21, 23, 25, 28, 31, 34, 37, 41, 45,
+    50, 55, 60, 66, 73, 80, 88, 97, 107, 118,
+    130, 143, 157, 173, 190, 209, 230, 253, 279, 307,
+    337, 371, 408, 449, 494, 544, 598, 658, 724, 796,
+    876, 963, 1060, 1166, 1282, 1411, 1552, 1707, 1878, 2066,
+    2272, 2499, 2749, 3024, 3327, 3660, 4026, 4428, 4871, 5358,
+    5894, 6484, 7132, 7845, 8630, 9493, 10442, 11487, 12635, 13899,
+    15289, 16818, 18500, 20350, 22385, 24623, 27086, 29794, 32767
+};
+
+static const int8_t g_ima_index_table[16] = {
+    -1, -1, -1, -1, 2, 4, 6, 8,
+    -1, -1, -1, -1, 2, 4, 6, 8
+};
+
+static uint8_t ima_adpcm_encode_nibble(int16_t sample, int16_t *pred, uint8_t *index)
+{
+    int step = g_ima_step_table[*index];
+    int diff = (int)sample - (int)(*pred);
+    uint8_t nibble = 0;
+    int vpdiff = step >> 3;
+
+    if (diff < 0) {
+        nibble = 0x08;
+        diff = -diff;
+    }
+    if (diff >= step) {
+        nibble |= 0x04;
+        diff -= step;
+        vpdiff += step;
+    }
+    step >>= 1;
+    if (diff >= step) {
+        nibble |= 0x02;
+        diff -= step;
+        vpdiff += step;
+    }
+    step >>= 1;
+    if (diff >= step) {
+        nibble |= 0x01;
+        vpdiff += step;
+    }
+
+    if (nibble & 0x08) {
+        *pred = (int16_t)MAX((int)(*pred) - vpdiff, -32768);
+    } else {
+        *pred = (int16_t)MIN((int)(*pred) + vpdiff, 32767);
+    }
+
+    int idx = (int)(*index) + g_ima_index_table[nibble & 0x0F];
+    if (idx < 0) {
+        idx = 0;
+    } else if (idx > 88) {
+        idx = 88;
+    }
+    *index = (uint8_t)idx;
+    return (uint8_t)(nibble & 0x0F);
+}
+
+static size_t audio_encode_ima_adpcm_8k(const int16_t *pcm16,
+                                        size_t pcm_samples,
+                                        uint8_t *out,
+                                        size_t out_cap)
+{
+    if (pcm16 == NULL || out == NULL || pcm_samples < 2U || out_cap < (AUDIO_CODEC_HDR_LEN + 1U)) {
+        return 0U;
+    }
+
+    static int16_t s_ds[320];
+    size_t ds_n = 0U;
+    for (size_t i = 0; i < pcm_samples && ds_n < ARRAY_SIZE(s_ds); i += 2U) {
+        s_ds[ds_n++] = pcm16[i];
+    }
+    if (ds_n < 2U || ds_n > 255U) {
+        return 0U;
+    }
+
+    size_t nibble_cnt = ds_n - 1U;
+    size_t data_bytes = (nibble_cnt + 1U) / 2U;
+    size_t total = AUDIO_CODEC_HDR_LEN + data_bytes;
+    if (total > out_cap) {
+        return 0U;
+    }
+
+    int16_t pred = s_ds[0];
+    uint8_t idx = 0U;
+
+    out[0] = AUDIO_CODEC_IMA_ADPCM_8K;
+    out[1] = 8U;   /* sample rate kHz */
+    out[2] = 1U;   /* mono */
+    out[3] = 4U;   /* bits per sample */
+    sys_put_le16((uint16_t)pred, &out[4]);
+    out[6] = idx;
+    out[7] = (uint8_t)ds_n;
+
+    size_t out_i = AUDIO_CODEC_HDR_LEN;
+    bool low = true;
+    uint8_t packed = 0U;
+    for (size_t i = 1U; i < ds_n; i++) {
+        uint8_t n = ima_adpcm_encode_nibble(s_ds[i], &pred, &idx);
+        if (low) {
+            packed = n;
+            low = false;
+        } else {
+            packed |= (uint8_t)(n << 4);
+            out[out_i++] = packed;
+            packed = 0U;
+            low = true;
+        }
+    }
+    if (!low) {
+        out[out_i++] = packed;
+    }
+
+    out[6] = idx;
+    return out_i;
+}
 
 #ifdef CONFIG_SPK_STREAM
 #define SPK_STREAM_STACK_SIZE 4096
@@ -688,6 +811,23 @@ static int audio_send_frame(const uint8_t *pcm, size_t len, uint16_t seq)
         return HAL_EINVAL;
     }
 
+    uint8_t frame_payload[sizeof(struct audio_pkt_hdr) + AUDIO_PAYLOAD_MAX];
+    size_t payload_len = 0U;
+    if (len >= sizeof(int16_t) * 2U) {
+        payload_len = audio_encode_ima_adpcm_8k((const int16_t *)pcm,
+                                                len / sizeof(int16_t),
+                                                frame_payload,
+                                                sizeof(frame_payload));
+    }
+    if (payload_len == 0U) {
+        if ((len + 1U) > sizeof(frame_payload)) {
+            return HAL_EINVAL;
+        }
+        frame_payload[0] = AUDIO_CODEC_PCM16_LE;
+        memcpy(&frame_payload[1], pcm, len);
+        payload_len = len + 1U;
+    }
+
     size_t uplink_max = app_uplink_max_payload();
     size_t payload_max = AUDIO_PAYLOAD_MAX;
     if (uplink_max > sizeof(struct audio_pkt_hdr)) {
@@ -700,7 +840,7 @@ static int audio_send_frame(const uint8_t *pcm, size_t len, uint16_t seq)
     }
 
     uint16_t frame_seq = seq;
-    uint8_t frag_cnt = (uint8_t)((len + payload_max - 1) / payload_max);
+    uint8_t frag_cnt = (uint8_t)((payload_len + payload_max - 1) / payload_max);
     if (frag_cnt == 0U || frag_cnt > AUDIO_MAX_FRAGS) {
         return HAL_EINVAL;
     }
@@ -708,10 +848,10 @@ static int audio_send_frame(const uint8_t *pcm, size_t len, uint16_t seq)
     static uint8_t s_pkts[AUDIO_MAX_FRAGS][sizeof(struct audio_pkt_hdr) + AUDIO_PAYLOAD_MAX];
     static const uint8_t *s_pkt_ptrs[AUDIO_MAX_FRAGS];
     static uint16_t s_pkt_lens[AUDIO_MAX_FRAGS];
-    size_t offset = 0;
+    size_t offset = 0U;
 
     for (uint8_t frag = 0; frag < frag_cnt; frag++) {
-        size_t remaining = len - offset;
+        size_t remaining = payload_len - offset;
         size_t chunk = (remaining > payload_max) ? payload_max : remaining;
 
         uint8_t *pkt = s_pkts[frag];
@@ -723,7 +863,7 @@ static int audio_send_frame(const uint8_t *pcm, size_t len, uint16_t seq)
         hdr->frag_cnt = frag_cnt;
         sys_put_le16((uint16_t)chunk, (uint8_t *)&hdr->payload_len);
 
-        memcpy(pkt + sizeof(struct audio_pkt_hdr), pcm + offset, chunk);
+        memcpy(pkt + sizeof(struct audio_pkt_hdr), frame_payload + offset, chunk);
         s_pkt_ptrs[frag] = pkt;
         s_pkt_lens[frag] = (uint16_t)(sizeof(struct audio_pkt_hdr) + chunk);
 
@@ -731,7 +871,7 @@ static int audio_send_frame(const uint8_t *pcm, size_t len, uint16_t seq)
     }
 
     return app_uplink_publish_batch(APP_DATA_PART_AUDIO_UP,
-                                    APP_UPLINK_PRIO_NORMAL,
+                                    APP_UPLINK_PRIO_LOW,
                                     s_pkt_ptrs,
                                     s_pkt_lens,
                                     frag_cnt,
@@ -820,8 +960,11 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
     uint32_t frames = 0;
     uint32_t frames_sent = 0;
     uint32_t frames_drop = 0;
+    uint32_t drop_not_ready = 0;
+    uint32_t drop_send_fail = 0;
     uint32_t pkts_sent = 0;
-    uint32_t bytes_sent = 0;
+    uint32_t pcm_bytes_sent = 0;
+    uint32_t wire_bytes_sent = 0;
 
     while (1) {
         struct mic_frame_msg msg;
@@ -834,6 +977,7 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
 
         if (!app_state_mic_enabled()) {
             frames_drop++;
+            drop_not_ready++;
             (void)hal_mic_release(msg.buf);
             goto log_stats;
         }
@@ -842,6 +986,7 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
         if (!app_uplink_service_is_ready() ||
             app_uplink_max_payload() <= sizeof(struct audio_pkt_hdr)) {
             frames_drop++;
+            drop_not_ready++;
             (void)hal_mic_release(msg.buf);
             goto log_stats;
         }
@@ -859,9 +1004,17 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
         if (ret == HAL_OK) {
             frames_sent++;
             pkts_sent += (uint32_t)((msg.len + payload_max - 1) / payload_max);
-            bytes_sent += (uint32_t)msg.len;
+            pcm_bytes_sent += (uint32_t)msg.len;
+            if (msg.len >= sizeof(int16_t) * 2U) {
+                size_t ds_n = (msg.len / sizeof(int16_t) + 1U) / 2U;
+                size_t nibble_cnt = (ds_n > 0U) ? (ds_n - 1U) : 0U;
+                wire_bytes_sent += (uint32_t)(AUDIO_CODEC_HDR_LEN + ((nibble_cnt + 1U) / 2U));
+            } else {
+                wire_bytes_sent += (uint32_t)(msg.len + 1U);
+            }
         } else {
             frames_drop++;
+            drop_send_fail++;
         }
 
         (void)hal_mic_release(msg.buf);
@@ -870,10 +1023,13 @@ log_stats:
         {
             uint64_t now = k_uptime_get();
             if (now - last_log >= 1000) {
-                LOG_INF("MIC stream: frames=%u sent=%u drop=%u pkts=%u bytes=%u ready=%d max_tx=%u",
-                        frames, frames_sent, frames_drop, pkts_sent, bytes_sent,
+#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
+                LOG_INF("MIC stream: frames=%u sent=%u drop=%u nrdy=%u send=%u pkts=%u pcm=%u wire=%u ready=%d max_tx=%u",
+                        frames, frames_sent, frames_drop, drop_not_ready, drop_send_fail,
+                        pkts_sent, pcm_bytes_sent, wire_bytes_sent,
                         app_uplink_service_is_ready(),
                         (unsigned)app_uplink_max_payload());
+#endif
                 last_log = now;
             }
         }
@@ -1006,4 +1162,5 @@ void app_rtc_start(void)
                           0,
                           "spk_play");
 #endif
+
 }

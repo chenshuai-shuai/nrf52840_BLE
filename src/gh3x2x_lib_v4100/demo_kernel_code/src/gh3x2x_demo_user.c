@@ -29,6 +29,8 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/spi.h>
+#include "spi_bus_arbiter.h"
+#include "hal_imu.h"
 
 // extern struct k_sem gh3x2x_int_sem;
 
@@ -187,6 +189,9 @@ void hal_gh3x2x_spi_init(void)
 GU8 hal_gh3x2x_spi_write(GU8 write_buffer[], GU16 length)
 {
     GU8 ret = 1;
+    if (spi_bus_lock(SPI_BUS_CLIENT_GH3X2X, K_MSEC(20)) != 0) {
+        return 0;
+    }
 #if (__GH3X2X_SPI_TYPE__ == __GH3X2X_SPI_TYPE_HARDWARE_CS__)
     gpio_pin_set(gh3x2x_info.spi_cs_dev, SPI_CS_PIN,  0);
 #endif
@@ -198,6 +203,7 @@ GU8 hal_gh3x2x_spi_write(GU8 write_buffer[], GU16 length)
 #if (__GH3X2X_SPI_TYPE__ == __GH3X2X_SPI_TYPE_HARDWARE_CS__)
     gpio_pin_set(gh3x2x_info.spi_cs_dev, SPI_CS_PIN,  1);
 #endif
+    (void)spi_bus_unlock(SPI_BUS_CLIENT_GH3X2X);
     return (ret == 0);
 }
 
@@ -220,13 +226,16 @@ GU8 hal_gh3x2x_spi_write(GU8 write_buffer[], GU16 length)
 GU8 hal_gh3x2x_spi_read(GU8 read_buffer[], GU16 length)
 {
     GU8 ret = 1;
+    if (spi_bus_lock(SPI_BUS_CLIENT_GH3X2X, K_MSEC(20)) != 0) {
+        return 0;
+    }
     rxb.buf = read_buffer;
     rxb.len = length;
     rx_bufs.buffers = &rxb;
     rx_bufs.count = 1U;
 
     ret = spi_read(gh3x2x_info.spi_dev, &spi_cfg_single, &rx_bufs);
-
+    (void)spi_bus_unlock(SPI_BUS_CLIENT_GH3X2X);
     return (ret == 0);
 }
 #elif (__GH3X2X_SPI_TYPE__ == __GH3X2X_SPI_TYPE_HARDWARE_CS__)
@@ -248,6 +257,9 @@ GU8 hal_gh3x2x_spi_write_F1_and_read(GU8 read_buffer[], GU16 length)
 {
     GU8 ret = 1;
     GU8 write_buffer[1] = {0xf1};
+    if (spi_bus_lock(SPI_BUS_CLIENT_GH3X2X, K_MSEC(20)) != 0) {
+        return 0;
+    }
     gpio_pin_set(gh3x2x_info.spi_cs_dev, SPI_CS_PIN,  0);
 
     txb.buf = write_buffer;
@@ -264,6 +276,7 @@ GU8 hal_gh3x2x_spi_write_F1_and_read(GU8 read_buffer[], GU16 length)
     ret = spi_read(gh3x2x_info.spi_dev, &spi_cfg_single, &rx_bufs);
 
     gpio_pin_set(gh3x2x_info.spi_cs_dev, SPI_CS_PIN,  1);
+    (void)spi_bus_unlock(SPI_BUS_CLIENT_GH3X2X);
     return (ret == 0);
 }
 #endif
@@ -496,12 +509,42 @@ void hal_gsensor_drv_get_fifo_data(STGsensorRawdata gsensor_buffer[], GU16 *gsen
 /*  (*gsensor_buffer_index) can not be allowed bigger than __GSENSOR_DATA_BUFFER_SIZE__  ****************/
 /* Be care for copying data to gsensor_buffer, length of gsensor_buffer is __GSENSOR_DATA_BUFFER_SIZE__ *****/
 /**************************** WARNNING END*****************************************************/
+    if (gsensor_buffer == NULL || gsensor_buffer_index == NULL) {
+        return;
+    }
+
+    GU16 req = *gsensor_buffer_index;
+    if (req == 0U) {
+        req = 1U;
+    }
+    if (req > (__GSENSOR_DATA_BUFFER_SIZE__)) {
+        req = (__GSENSOR_DATA_BUFFER_SIZE__);
+    }
+
+    imu_sample_t imu = {0};
+    uint32_t imu_ts_ms = 0;
+    int iret = hal_imu_get_latest(&imu, &imu_ts_ms);
+    if (iret != 0) {
+        *gsensor_buffer_index = 0;
+        return;
+    }
+
+    /* ICM42670 accel @ +/-16g -> 2048 LSB/g. Goodix expects 512 LSB/g. */
+    GS16 ax_512g = (GS16)(imu.accel_x / 4);
+    GS16 ay_512g = (GS16)(imu.accel_y / 4);
+    GS16 az_512g = (GS16)(imu.accel_z / 4);
+
+    for (GU16 i = 0; i < req; i++) {
+        gsensor_buffer[i].sXAxisVal = ax_512g;
+        gsensor_buffer[i].sYAxisVal = ay_512g;
+        gsensor_buffer[i].sZAxisVal = az_512g;
+    }
+    *gsensor_buffer_index = req;
 
 #if (__DRIVER_LIB_MODE__ == __DRV_LIB_WITH_ALGO__)
-    for (int i = 0; i < *gsensor_buffer_index; i++)
+    for (GU16 i = 0; i < *gsensor_buffer_index; i++)
     {
-        GU32 unTimeStamp = 0;
-        /* user set time stamp code here */
+        GU32 unTimeStamp = (GU32)(imu_ts_ms + ((uint32_t)i * 10U));
         GH3X2X_TimestampSyncFillAccSyncBuffer(unTimeStamp, gsensor_buffer[i].sXAxisVal, gsensor_buffer[i].sYAxisVal, gsensor_buffer[i].sZAxisVal);
     }
 #endif

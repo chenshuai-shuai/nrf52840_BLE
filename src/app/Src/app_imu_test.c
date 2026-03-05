@@ -11,7 +11,7 @@
 LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
 
 #define IMU_TEST_STACK_SIZE 2048
-#define IMU_TEST_PRIORITY   5
+#define IMU_TEST_PRIORITY   8
 
 #define IMU_ACCEL_LSB_PER_G 2048
 #define IMU_GYRO_LSB_PER_DPS_X10 164
@@ -22,6 +22,7 @@ LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
 #define IMU_ACTION_LOG_EVERY_N 100
 #define IMU_RATE_LOG_PERIOD_MS 5000
 #define IMU_UPLINK_EVERY_N 20
+#define IMU_PROCESS_DECIM 4
 
 static struct k_thread g_imu_thread;
 RT_THREAD_STACK_DEFINE(g_imu_stack, IMU_TEST_STACK_SIZE);
@@ -100,7 +101,9 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         if ((now - rate_t0) >= IMU_RATE_LOG_PERIOD_MS) {
             uint32_t elapsed_ms = (uint32_t)(now - rate_t0);
             uint32_t sps = (elapsed_ms > 0U) ? (rate_cnt * 1000U / elapsed_ms) : 0U;
+#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
             LOG_INF("imu_rate,sps=%u (samples=%u, ms=%u)", sps, rate_cnt, elapsed_ms);
+#endif
             rate_cnt = 0;
             rate_t0 = now;
         }
@@ -126,6 +129,11 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
             continue;
         }
 
+        if ((sample_cnt % IMU_PROCESS_DECIM) != 0U) {
+            k_yield();
+            continue;
+        }
+
         int32_t ax = (int32_t)(s.accel_x - ax_bias);
         int32_t ay = (int32_t)(s.accel_y - ay_bias);
         int32_t az = (int32_t)(s.accel_z - az_bias);
@@ -146,16 +154,20 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         int32_t t_frac = t_abs % 100;
 
         if (!header_printed) {
+#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
             LOG_INF("imu_raw,seq,ax_lsb,ay_lsb,az_lsb,gx_lsb,gy_lsb,gz_lsb,temp_lsb,temp_C");
+#endif
             header_printed = true;
         }
 
         if ((sample_cnt % IMU_LOG_EVERY_N) == 0U) {
+#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
             LOG_INF("imu_raw,%u,%d,%d,%d,%d,%d,%d,%d,%d.%02d",
                     sample_cnt,
                     s.accel_x, s.accel_y, s.accel_z,
                     s.gyro_x, s.gyro_y, s.gyro_z,
                     s.temp, t_int, t_frac);
+#endif
         }
 
         imu_algo_input_t algo_in = {
@@ -167,7 +179,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
             .gyro_z_lsb = gz_f,
             .temp_centi_deg = t_centi,
             .timestamp_ms = (uint32_t)k_uptime_get(),
-            .dt_ms = 10U,
+            .dt_ms = (10U * IMU_PROCESS_DECIM),
         };
         imu_algo_output_t algo_out = {0};
         ret = imu_algo_process(&algo_in, &algo_out);
@@ -179,10 +191,12 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
             bool changed_log_allowed = action_changed &&
                                        ((act_now - last_action_log_ms) >= 1000);
             if (periodic_log || changed_log_allowed) {
+#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
                 LOG_INF("imu_action,seq=%u,action=%s,conf=%u",
                         sample_cnt,
                         imu_action_name(algo_out.action),
                         algo_out.confidence);
+#endif
                 last_action = algo_out.action;
                 last_action_log_ms = act_now;
             }
@@ -210,6 +224,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
                                          imu_pkt.ts_ms);
             }
         }
+        k_yield();
     }
 }
 

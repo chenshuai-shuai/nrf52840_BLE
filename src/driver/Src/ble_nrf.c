@@ -31,6 +31,7 @@ K_MSGQ_DEFINE(g_ble_rx_q, sizeof(struct ble_rx_msg), BLE_RX_Q_LEN, 4);
 static struct bt_conn *g_conn;
 static bool g_notify_enabled;
 static uint16_t g_att_mtu;
+static int64_t g_last_param_req_ms;
 static DRIVER_STATS_DEFINE(g_ble_stats);
 
 /* Custom 128-bit UUIDs (match Android side) */
@@ -185,12 +186,30 @@ static struct bt_gatt_exchange_params g_mtu_params = {
     .func = mtu_exchange_cb,
 };
 
+static const struct bt_le_conn_param g_pref_conn_param = {
+    .interval_min = 6,   /* 7.5 ms */
+    .interval_max = 12,  /* 15 ms */
+    .latency = 0,
+    .timeout = 400,      /* 4 s */
+};
+
 static void ble_le_param_updated(struct bt_conn *conn, uint16_t interval,
                                  uint16_t latency, uint16_t timeout)
 {
-    ARG_UNUSED(conn);
     LOG_INF("BLE conn params: interval=%u units, latency=%u, timeout=%u units",
             (unsigned)interval, (unsigned)latency, (unsigned)timeout);
+    if (interval > g_pref_conn_param.interval_max) {
+        int64_t now = k_uptime_get();
+        if ((now - g_last_param_req_ms) >= 5000) {
+            int ret = bt_conn_le_param_update(conn, &g_pref_conn_param);
+            if (ret) {
+                LOG_WRN("BLE re-request conn params failed: %d", ret);
+            } else {
+                LOG_INF("BLE re-requested conn params 6-12");
+                g_last_param_req_ms = now;
+            }
+        }
+    }
 }
 
 static void ble_connected(struct bt_conn *conn, uint8_t err)
@@ -203,6 +222,7 @@ static void ble_connected(struct bt_conn *conn, uint8_t err)
 
     g_conn = bt_conn_ref(conn);
     g_att_mtu = 23;
+    g_last_param_req_ms = 0;
     LOG_INF("BLE connected");
 
     struct bt_conn_info info;
@@ -235,6 +255,14 @@ static void ble_connected(struct bt_conn *conn, uint8_t err)
         }
     }
 
+    int preq = bt_conn_le_param_update(conn, &g_pref_conn_param);
+    if (preq) {
+        LOG_WRN("BLE conn param update request failed: %d", preq);
+    } else {
+        LOG_INF("BLE conn param update requested: 6-12");
+        g_last_param_req_ms = k_uptime_get();
+    }
+
     driver_stats_record_ok(&g_ble_stats);
 }
 
@@ -250,6 +278,7 @@ static void ble_disconnected(struct bt_conn *conn, uint8_t reason)
     }
     g_notify_enabled = false;
     g_att_mtu = 0;
+    g_last_param_req_ms = 0;
     driver_stats_record_ok(&g_ble_stats);
 }
 

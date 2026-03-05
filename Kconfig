@@ -96,6 +96,16 @@ config PPG_GH_VERBOSE_LOG
 	  (for example usGotEvent/FIFO event prints). Keep disabled during
 	  normal PPG debugging to reduce RTT load and scheduling jitter.
 
+config PPG_TUNE_MODE
+	bool "Enable PPG tuning log mode"
+	default n
+	depends on HAL_PPG
+	depends on DRIVER_PPG_NRF
+	help
+	  Focus runtime logs on PPG tuning. When enabled, high-rate periodic
+	  logs from other services are suppressed and app_ppg_hr prints raw
+	  per-sample values from hal_ppg_read().
+
 config HAL_IMU
 	bool "Enable HAL IMU"
 	default n

@@ -10,6 +10,7 @@
 #include "boot_tone.h"
 #include "system_state.h"
 #include "app_db.h"
+#include "spi_bus_arbiter.h"
 
 #include <zephyr/logging/log.h>
 
@@ -25,6 +26,7 @@ int main(void)
 
     system_state_init();
     (void)app_db_init();
+    (void)spi_bus_arbiter_init();
     ret = app_bus_start();
     if (ret != HAL_OK) {
         printk("app_bus_start failed: %d\n", ret);
@@ -32,6 +34,8 @@ int main(void)
     }
 
 #if IS_ENABLED(CONFIG_BOOT_TONE)
+    /* Bring up PM first so speaker/amp rails are stable before boot tone. */
+    (void)app_lifecycle_start(APP_LC_PM);
     boot_tone_play();
 #endif
 

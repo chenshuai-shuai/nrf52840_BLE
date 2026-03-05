@@ -10,12 +10,12 @@
 
 LOG_MODULE_REGISTER(ppg_nrf, LOG_LEVEL_INF);
 
-#define GH3026_THREAD_STACK_SIZE 6144
+#define GH3026_THREAD_STACK_SIZE 4096
 #define GH3026_THREAD_PRIORITY   6
 
 static struct k_thread g_gh_thread;
 K_THREAD_STACK_DEFINE(g_gh_stack, GH3026_THREAD_STACK_SIZE);
-K_MSGQ_DEFINE(g_ppg_sample_q, sizeof(hal_ppg_sample_t), 16, 4);
+K_MSGQ_DEFINE(g_ppg_sample_q, sizeof(hal_ppg_sample_t), 8, 4);
 K_SEM_DEFINE(g_gh_irq_sem, 0, UINT_MAX);
 
 extern GU8 g_uchGh3x2xIntCallBackIsCalled;

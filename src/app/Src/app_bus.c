@@ -10,9 +10,9 @@
 
 LOG_MODULE_REGISTER(app_bus, LOG_LEVEL_INF);
 
-#define APP_BUS_STACK_SIZE 2048
+#define APP_BUS_STACK_SIZE 1536
 #define APP_BUS_PRIORITY   9
-#define APP_BUS_QUEUE_LEN  32
+#define APP_BUS_QUEUE_LEN  16
 #define APP_BUS_MAX_SUBS   8
 
 typedef struct {

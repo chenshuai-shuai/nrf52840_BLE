@@ -30,3 +30,11 @@ int hal_imu_read(void *buf, size_t len, int timeout_ms)
     }
     return g_imu_ops->read(buf, len, timeout_ms);
 }
+
+int hal_imu_get_latest(imu_sample_t *out, uint32_t *timestamp_ms)
+{
+    if (g_imu_ops == NULL || g_imu_ops->get_latest == NULL) {
+        return HAL_ENODEV;
+    }
+    return g_imu_ops->get_latest(out, timestamp_ms);
+}

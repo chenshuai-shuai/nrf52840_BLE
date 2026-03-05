@@ -9,6 +9,24 @@
 
 LOG_MODULE_REGISTER(boot_tone, LOG_LEVEL_INF);
 
+static int boot_tone_write_block(const int16_t *buf, size_t len)
+{
+    int last_ret = -EAGAIN;
+    for (int retry = 0; retry < 10; retry++) {
+        int ret = hal_spk_write(buf, len, 200);
+        if (ret == HAL_OK) {
+            return HAL_OK;
+        }
+        last_ret = ret;
+        if (ret == -EAGAIN || ret == -ENOMEM || ret == HAL_EBUSY) {
+            k_msleep(5);
+            continue;
+        }
+        return ret;
+    }
+    return last_ret;
+}
+
 void boot_tone_play(void)
 {
 #if !IS_ENABLED(CONFIG_BOOT_TONE)
@@ -39,6 +57,7 @@ void boot_tone_play(void)
     const uint8_t tone_blocks[] = { 35, 35, 45 }; /* 10 ms per block */
 
     LOG_INF("boot tone: start");
+    int64_t start_ms = k_uptime_get();
     for (size_t t = 0; t < ARRAY_SIZE(tone_hz); t++) {
         uint32_t phase = 0;
         uint32_t step = (tone_hz[t] * 32U << 16) / rate;
@@ -49,7 +68,7 @@ void boot_tone_play(void)
                 buf[i] = sine32[idx];
                 phase += step;
             }
-            ret = hal_spk_write(buf, sizeof(buf), 1000);
+            ret = boot_tone_write_block(buf, sizeof(buf));
             if (ret != HAL_OK) {
                 LOG_ERR("boot tone: hal_spk_write failed: %d", ret);
                 (void)hal_spk_stop();
@@ -59,7 +78,7 @@ void boot_tone_play(void)
 
         memset(buf, 0, sizeof(buf));
         for (int block = 0; block < 7; block++) {
-            ret = hal_spk_write(buf, sizeof(buf), 1000);
+            ret = boot_tone_write_block(buf, sizeof(buf));
             if (ret != HAL_OK) {
                 LOG_ERR("boot tone: silent write failed: %d", ret);
                 (void)hal_spk_stop();
@@ -69,6 +88,6 @@ void boot_tone_play(void)
     }
 
     (void)hal_spk_stop();
-    LOG_INF("boot tone: done");
+    LOG_INF("boot tone: done (%d ms)", (int)(k_uptime_get() - start_ms));
 #endif
 }

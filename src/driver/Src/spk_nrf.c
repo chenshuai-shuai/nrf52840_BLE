@@ -43,6 +43,8 @@ static const struct device *const i2s_dev = DEVICE_DT_GET(I2S_DEV_NODE);
 #define SPK_BITS_PER_SAMPLE       16U
 #define SPK_NUM_CHANNELS          2U
 #define SPK_BLOCK_SAMPLES_PER_CH  160U /* 10 ms @ 16 kHz */
+#define SPK_I2S_TIMEOUT_MS        2000U
+#define SPK_WRITE_RETRY_SLEEP_MS  2U
 
 #define SPK_BLOCK_BYTES (SPK_BLOCK_SAMPLES_PER_CH * SPK_NUM_CHANNELS * sizeof(int16_t))
 #define SPK_BLOCK_COUNT 8U
@@ -91,7 +93,7 @@ static int spk_i2s_configure(uint32_t sample_rate_hz)
     cfg.frame_clk_freq = sample_rate_hz;
     cfg.block_size = SPK_BLOCK_BYTES;
     cfg.mem_slab = &spk_tx_slab;
-    cfg.timeout = 2000;
+    cfg.timeout = SPK_I2S_TIMEOUT_MS;
 
     return i2s_configure(i2s_dev, I2S_DIR_TX, &cfg);
 }
@@ -246,10 +248,21 @@ static int spk_nrf_write(const void *buf, size_t len, int timeout_ms)
             blk[i * 2 + 1] = s;
         }
 
-        rc = i2s_write(i2s_dev, blk, SPK_BLOCK_BYTES);
-        if (rc) {
-            k_mem_slab_free(&spk_tx_slab, (void *)blk);
-            return rc;
+        int64_t deadline = (timeout_ms < 0) ? INT64_MAX : (k_uptime_get() + timeout_ms);
+        while (1) {
+            rc = i2s_write(i2s_dev, blk, SPK_BLOCK_BYTES);
+            if (rc == 0) {
+                break;
+            }
+            if (rc != -EAGAIN && rc != -EBUSY) {
+                k_mem_slab_free(&spk_tx_slab, (void *)blk);
+                return rc;
+            }
+            if (timeout_ms >= 0 && k_uptime_get() >= deadline) {
+                k_mem_slab_free(&spk_tx_slab, (void *)blk);
+                return rc;
+            }
+            k_msleep(SPK_WRITE_RETRY_SLEEP_MS);
         }
 
         off += chunk;

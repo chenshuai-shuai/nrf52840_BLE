@@ -14,18 +14,18 @@
 
 LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
 
-#define APP_PPG_HR_STACK_SIZE 3072
+#define APP_PPG_HR_STACK_SIZE 2304
 #define APP_PPG_HR_PRIORITY   7
-#define APP_PPG_HR_WARMUP_MS  4000U
+#define APP_PPG_HR_WARMUP_MS  3000U
 #define APP_PPG_HR_MIN_BPM    40
 #define APP_PPG_HR_MAX_BPM    220
-#define APP_PPG_HR_ACQ_MIN_BPM 45
+#define APP_PPG_HR_ACQ_MIN_BPM 55
 #define APP_PPG_HR_ACQ_MAX_BPM 140
-#define APP_PPG_HR_CONF_SOFT  75
+#define APP_PPG_HR_CONF_SOFT  60
 #define APP_PPG_HR_CONF_HARD  85
-#define APP_PPG_HR_CONF_LOCK  90
+#define APP_PPG_HR_CONF_LOCK  78
 #define APP_PPG_HR_CONF_TRACK_MIN 60
-#define APP_PPG_HR_CONF_LOCK_RELAX 70
+#define APP_PPG_HR_CONF_LOCK_RELAX 68
 #define APP_PPG_HR_STABLE_N   3
 #define APP_PPG_HR_STABLE_D   3
 #define APP_PPG_HR_LOCK_BPM_MAX   45
@@ -37,17 +37,18 @@ LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
 #define APP_PPG_HR_HIGH_LOCK_HOLD_N    8
 #define APP_PPG_HR_NO_VALID_RECOVERY_MS 12000U
 #define APP_PPG_HR_TRACK_NO_VALID_RECOVERY_MS 20000U
-#define APP_PPG_HR_FAST_LOCK_MIN_MS    2000U
-#define APP_PPG_HR_FAST_LOCK_CONF      96
+#define APP_PPG_HR_FAST_LOCK_MIN_MS    1500U
+#define APP_PPG_HR_FAST_LOCK_CONF      92
 #define APP_PPG_HR_FAST_LOCK_N         2U
-#define APP_PPG_HR_RELAX_LOCK_MIN_MS   10000U
-#define APP_PPG_HR_RELAX_LOCK_STABLE_N 6U
+#define APP_PPG_HR_RELAX_LOCK_MIN_MS   6000U
+#define APP_PPG_HR_RELAX_LOCK_STABLE_N 4U
 #define APP_PPG_HR_ACQ_RECOVERY_TIMEOUT_MS 45000U
 #define APP_PPG_HR_ACQ_STUCK_LOW_BPM      42
 #define APP_PPG_HR_ACQ_STUCK_CONF_MIN     95
 #define APP_PPG_HR_ACQ_STUCK_HOLD_N       10
-#define APP_PPG_HR_ACQ_STUCK_MIN_MS       12000U
-#define APP_PPG_HR_ACQ_FIRST_RETRY_MS     12000U
+#define APP_PPG_HR_ACQ_STUCK_MIN_MS       15000U
+#define APP_PPG_HR_ACQ_FIRST_RETRY_MS     0U
+#define APP_PPG_LOG_PERIOD_MS             5000U
 
 typedef enum {
     APP_PPG_MODE_ACQUIRE = 0,
@@ -93,6 +94,11 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
     ARG_UNUSED(p3);
     uint32_t timeout_cnt = 0;
     int64_t last_timeout_log_ms = k_uptime_get();
+    int64_t last_ppg_log_ms = k_uptime_get();
+    int64_t last_uplink_log_ms = k_uptime_get();
+    uint32_t valid_out_cnt = 0;
+    uint32_t ppg_tx_ok = 0;
+    uint32_t ppg_tx_drop = 0;
     int64_t start_ms = k_uptime_get();
     bool warmup_done_logged = false;
     app_ppg_mode_t mode = APP_PPG_MODE_ACQUIRE;
@@ -115,6 +121,14 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
         if (ret == HAL_OK) {
             int64_t now_ms = k_uptime_get();
             last_result_ms = now_ms;
+#if IS_ENABLED(CONFIG_PPG_TUNE_MODE)
+            LOG_INF("ppg raw: hr=%d conf=%d snr=%d frame=%u ts=%u",
+                    (int)sample.hr_bpm,
+                    (int)sample.confidence,
+                    (int)sample.snr,
+                    (unsigned int)sample.frame_id,
+                    (unsigned int)sample.timestamp_ms);
+#endif
             bool warmup_done = (uint32_t)(now_ms - start_ms) >= APP_PPG_HR_WARMUP_MS;
             if (warmup_done && !warmup_done_logged) {
                 LOG_INF("ppg hr: warmup done, acquiring lock");
@@ -238,9 +252,13 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                     ((uint32_t)(now_ms - last_valid_ms) >= APP_PPG_HR_TRACK_NO_VALID_RECOVERY_MS);
                 bool recover_due_to_acq_timeout =
                     (mode == APP_PPG_MODE_ACQUIRE) &&
-                    ((uint32_t)(now_ms - start_ms) >= APP_PPG_HR_ACQ_RECOVERY_TIMEOUT_MS);
+                    ((uint32_t)(now_ms - start_ms) >= APP_PPG_HR_ACQ_RECOVERY_TIMEOUT_MS) &&
+                    !(valid_track &&
+                      sample.hr_bpm >= APP_PPG_HR_ACQ_MIN_BPM &&
+                      sample.hr_bpm <= APP_PPG_HR_ACQ_MAX_BPM);
                 bool recover_due_to_acq_first_retry =
                     (mode == APP_PPG_MODE_ACQUIRE) &&
+                    (APP_PPG_HR_ACQ_FIRST_RETRY_MS > 0U) &&
                     (recover_cnt == 0U) &&
                     ((uint32_t)(now_ms - start_ms) >= APP_PPG_HR_ACQ_FIRST_RETRY_MS);
                 bool recover_due_to_acq_stuck =
@@ -301,12 +319,18 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                 continue;
             }
 
-            printk("ppg hr: bpm=%d conf=%d snr=%d frame=%u ts=%u\n",
-                   (int)sample.hr_bpm,
-                   (int)sample.confidence,
-                   (int)sample.snr,
-                   (unsigned int)sample.frame_id,
-                   (unsigned int)sample.timestamp_ms);
+            valid_out_cnt++;
+            int64_t now_log_ms = k_uptime_get();
+            if ((uint32_t)(now_log_ms - last_ppg_log_ms) >= APP_PPG_LOG_PERIOD_MS) {
+                LOG_INF("ppg hr: valid=%u bpm=%d conf=%d snr=%d frame=%u",
+                        (unsigned int)valid_out_cnt,
+                        (int)sample.hr_bpm,
+                        (int)sample.confidence,
+                        (int)sample.snr,
+                        (unsigned int)sample.frame_id);
+                valid_out_cnt = 0;
+                last_ppg_log_ms = now_log_ms;
+            }
             ppg_hr_set_latest(&sample);
             ppg_state_t ppg_state = {
                 .sample = sample,
@@ -339,16 +363,30 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                 .frame_id = sample.frame_id,
                 .ts_ms = sample.timestamp_ms,
             };
-            (void)app_uplink_publish(APP_DATA_PART_PPG,
-                                     APP_UPLINK_PRIO_NORMAL,
-                                     &ppg_pkt,
-                                     sizeof(ppg_pkt),
-                                     ppg_pkt.ts_ms);
+            int uret = app_uplink_publish(APP_DATA_PART_PPG,
+                                          APP_UPLINK_PRIO_HIGH,
+                                          &ppg_pkt,
+                                          sizeof(ppg_pkt),
+                                          ppg_pkt.ts_ms);
+            if (uret == HAL_OK) {
+                ppg_tx_ok++;
+            } else {
+                ppg_tx_drop++;
+            }
             low_lock_cnt = 0;
             high_lock_cnt = 0;
             last_valid_ms = now_ms;
             timeout_cnt = 0;
             last_timeout_log_ms = k_uptime_get();
+            if ((uint32_t)(now_ms - last_uplink_log_ms) >= APP_PPG_LOG_PERIOD_MS) {
+                LOG_INF("ppg uplink: tx_ok=%u tx_drop=%u ready=%d",
+                        (unsigned int)ppg_tx_ok,
+                        (unsigned int)ppg_tx_drop,
+                        app_uplink_service_is_ready() ? 1 : 0);
+                ppg_tx_ok = 0;
+                ppg_tx_drop = 0;
+                last_uplink_log_ms = now_ms;
+            }
         } else if (ret == -ETIMEDOUT) {
             timeout_cnt++;
             int64_t now_ms = k_uptime_get();
@@ -378,7 +416,7 @@ int app_ppg_hr_start(void)
     }
 
     (void)GH3X2X_HbAlgorithmScenarioConfig((GU8)HBA_SCENES_STILL_REST);
-    (void)GH3X2X_HbAlgorithmOutputTimeConfig(12, 5);
+    (void)GH3X2X_HbAlgorithmOutputTimeConfig(8, 2);
 
     k_mutex_init(&g_ppg_hr_state_lock);
     g_ppg_hr_state = APP_PPG_HR_ST_NOT_READY;

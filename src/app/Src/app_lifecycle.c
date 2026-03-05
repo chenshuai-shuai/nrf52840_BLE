@@ -282,8 +282,8 @@ static const app_boot_item_t g_boot_order[] = {
     {.id = APP_LC_PM, .required = true,  .deps_mask = 0},
     {.id = APP_LC_UPLINK, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_RTC, .required = false, .deps_mask = BIT(APP_LC_UPLINK)},
-    {.id = APP_LC_IMU, .required = false, .deps_mask = 0},
     {.id = APP_LC_PPG, .required = false, .deps_mask = BIT(APP_LC_PM)},
+    {.id = APP_LC_IMU, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_GPS, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_PM_TEST, .required = false, .deps_mask = BIT(APP_LC_PM)},
 };

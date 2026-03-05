@@ -9,6 +9,7 @@
 
 #include "hal_imu.h"
 #include "error.h"
+#include "spi_bus_arbiter.h"
 
 LOG_MODULE_REGISTER(imu_nrf, LOG_LEVEL_INF);
 
@@ -52,6 +53,10 @@ static struct {
     atomic_t irq_count;
     struct spi_config cfg;
     bool cfg_inited;
+    struct k_mutex latest_lock;
+    imu_sample_t latest;
+    uint32_t latest_ts_ms;
+    bool latest_valid;
 } g_imu;
 
 K_SEM_DEFINE(g_imu_drdy_sem, 0, 1);
@@ -80,7 +85,13 @@ static int imu_reg_write_cfg(const struct spi_config *cfg, uint8_t reg, uint8_t 
         .buffers = &buf,
         .count = 1,
     };
-    return spi_write(g_imu_spi.bus, cfg, &tx_set);
+    int ret = spi_bus_lock(SPI_BUS_CLIENT_IMU, K_MSEC(20));
+    if (ret) {
+        return ret;
+    }
+    ret = spi_write(g_imu_spi.bus, cfg, &tx_set);
+    (void)spi_bus_unlock(SPI_BUS_CLIENT_IMU);
+    return ret;
 }
 
 static int imu_reg_read_block_cfg(const struct spi_config *cfg,
@@ -109,7 +120,13 @@ static int imu_reg_read_block_cfg(const struct spi_config *cfg,
         .buffers = rx_bufs,
         .count = 2,
     };
-    return spi_transceive(g_imu_spi.bus, cfg, &tx_set, &rx_set);
+    int ret = spi_bus_lock(SPI_BUS_CLIENT_IMU, K_MSEC(20));
+    if (ret) {
+        return ret;
+    }
+    ret = spi_transceive(g_imu_spi.bus, cfg, &tx_set, &rx_set);
+    (void)spi_bus_unlock(SPI_BUS_CLIENT_IMU);
+    return ret;
 }
 
 static int imu_reg_read_cfg(const struct spi_config *cfg, uint8_t reg, uint8_t *val)
@@ -293,15 +310,46 @@ static int imu_nrf_read(void *buf, size_t len, int timeout_ms)
     s->gyro_y = (int16_t)((raw[10] << 8) | raw[11]);
     s->gyro_z = (int16_t)((raw[12] << 8) | raw[13]);
 
+    k_mutex_lock(&g_imu.latest_lock, K_FOREVER);
+    g_imu.latest = *s;
+    g_imu.latest_ts_ms = (uint32_t)k_uptime_get();
+    g_imu.latest_valid = true;
+    k_mutex_unlock(&g_imu.latest_lock);
+
+    return HAL_OK;
+}
+
+static int imu_nrf_get_latest(imu_sample_t *out, uint32_t *timestamp_ms)
+{
+    if (out == NULL) {
+        return HAL_EINVAL;
+    }
+
+    k_mutex_lock(&g_imu.latest_lock, K_FOREVER);
+    if (!g_imu.latest_valid) {
+        k_mutex_unlock(&g_imu.latest_lock);
+        return HAL_ENODEV;
+    }
+    *out = g_imu.latest;
+    if (timestamp_ms != NULL) {
+        *timestamp_ms = g_imu.latest_ts_ms;
+    }
+    k_mutex_unlock(&g_imu.latest_lock);
     return HAL_OK;
 }
 
 static const hal_imu_ops_t g_imu_ops = {
     .init = imu_nrf_init,
     .read = imu_nrf_read,
+    .get_latest = imu_nrf_get_latest,
 };
 
 int imu_nrf_register(void)
 {
+    static bool lock_inited;
+    if (!lock_inited) {
+        k_mutex_init(&g_imu.latest_lock);
+        lock_inited = true;
+    }
     return hal_imu_register(&g_imu_ops);
 }

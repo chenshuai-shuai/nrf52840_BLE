@@ -26,12 +26,12 @@ typedef struct {
 
 K_MUTEX_DEFINE(g_store_lock);
 
-static app_data_slot_t g_ctrl_slots[64];
-static app_data_slot_t g_audio_up_slots[256];
-static app_data_slot_t g_audio_down_slots[64];
-static app_data_slot_t g_ppg_slots[64];
-static app_data_slot_t g_imu_slots[64];
-static app_data_slot_t g_pm_slots[32];
+static app_data_slot_t g_ctrl_slots[16];
+static app_data_slot_t g_audio_up_slots[64];
+static app_data_slot_t g_audio_down_slots[16];
+static app_data_slot_t g_ppg_slots[16];
+static app_data_slot_t g_imu_slots[16];
+static app_data_slot_t g_pm_slots[16];
 
 static app_data_ring_t g_rings[APP_DATA_PART_COUNT];
 

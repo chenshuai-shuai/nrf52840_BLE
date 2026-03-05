@@ -10,10 +10,10 @@
 
 LOG_MODULE_REGISTER(app_uplink, LOG_LEVEL_INF);
 
-#define APP_UPLINK_STACK_SIZE 3072
+#define APP_UPLINK_STACK_SIZE 2560
 #define APP_UPLINK_PRIORITY   6
-#define APP_UPLINK_Q_LEN      128
-#define APP_DOWNLINK_Q_LEN    128
+#define APP_UPLINK_Q_LEN      64
+#define APP_DOWNLINK_Q_LEN    64
 #define APP_UPLINK_MIN_ATT_MTU 23
 #define APP_UPLINK_ATT_HDR_LEN 3
 #define APP_UPLINK_MAX_REC_LEN 256
@@ -21,6 +21,10 @@ LOG_MODULE_REGISTER(app_uplink, LOG_LEVEL_INF);
 #define APP_AUDIO_PKT_MAGIC0  0xA5
 #define APP_AUDIO_PKT_MAGIC1  0x5A
 #define APP_UPLINK_BATCH_MAX  32
+#define APP_UPLINK_MAGIC0     0xC3
+#define APP_UPLINK_MAGIC1     0x5C
+#define APP_UPLINK_VER        1
+#define APP_UPLINK_WIRE_HDR_LEN 14
 
 typedef struct {
     app_data_ticket_t ticket;
@@ -55,6 +59,50 @@ static size_t uplink_max_payload_bytes(void)
         max_payload = APP_UPLINK_MAX_REC_LEN;
     }
     return max_payload;
+}
+
+static bool needs_uplink_wire_header(app_data_part_t part)
+{
+    return (part == APP_DATA_PART_PPG ||
+            part == APP_DATA_PART_IMU ||
+            part == APP_DATA_PART_PM);
+}
+
+static size_t build_uplink_wire_packet(const app_data_record_t *rec,
+                                       uint8_t *out_buf,
+                                       size_t out_cap)
+{
+    if (rec == NULL || out_buf == NULL) {
+        return 0U;
+    }
+    if (!needs_uplink_wire_header(rec->part)) {
+        if (rec->len > out_cap) {
+            return 0U;
+        }
+        memcpy(out_buf, rec->data, rec->len);
+        return rec->len;
+    }
+
+    size_t total = APP_UPLINK_WIRE_HDR_LEN + rec->len;
+    if (total > out_cap) {
+        return 0U;
+    }
+    out_buf[0] = APP_UPLINK_MAGIC0;
+    out_buf[1] = APP_UPLINK_MAGIC1;
+    out_buf[2] = APP_UPLINK_VER;
+    out_buf[3] = (uint8_t)rec->part;
+    out_buf[4] = (uint8_t)(rec->len & 0xFF);
+    out_buf[5] = (uint8_t)((rec->len >> 8) & 0xFF);
+    out_buf[6] = (uint8_t)(rec->rec_id & 0xFF);
+    out_buf[7] = (uint8_t)((rec->rec_id >> 8) & 0xFF);
+    out_buf[8] = (uint8_t)(rec->ts_ms & 0xFF);
+    out_buf[9] = (uint8_t)((rec->ts_ms >> 8) & 0xFF);
+    out_buf[10] = (uint8_t)((rec->ts_ms >> 16) & 0xFF);
+    out_buf[11] = (uint8_t)((rec->ts_ms >> 24) & 0xFF);
+    out_buf[12] = 0;
+    out_buf[13] = 0;
+    memcpy(out_buf + APP_UPLINK_WIRE_HDR_LEN, rec->data, rec->len);
+    return total;
 }
 
 static app_data_part_t classify_downlink_part(const uint8_t *buf, size_t len)
@@ -217,14 +265,21 @@ static void uplink_thread_entry(void *p1, void *p2, void *p3)
             continue;
         }
 
+        uint8_t wire_buf[APP_UPLINK_MAX_REC_LEN];
+        size_t wire_len = build_uplink_wire_packet(&rec, wire_buf, sizeof(wire_buf));
+        if (wire_len == 0U) {
+            sent_drop++;
+            have_item = false;
+            continue;
+        }
         size_t max_payload = uplink_max_payload_bytes();
-        if (rec.len > (uint16_t)max_payload) {
+        if (wire_len > max_payload) {
             sent_drop++;
             have_item = false;
             continue;
         }
 
-        int sret = hal_ble_send(rec.data, rec.len, 0);
+        int sret = hal_ble_send(wire_buf, wire_len, 0);
         if (sret == HAL_OK) {
             sent_ok++;
             have_item = false;
@@ -247,6 +302,7 @@ static void uplink_thread_entry(void *p1, void *p2, void *p3)
 
         uint64_t now = k_uptime_get();
         if ((now - last_stat_ms) >= 5000U) {
+#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
             LOG_INF("uplink stat: tx_ok=%u tx_drop=%u rx_ok=%u rx_drop=%u ble_ready=%d mtu=%d",
                     (unsigned int)sent_ok,
                     (unsigned int)sent_drop,
@@ -254,6 +310,7 @@ static void uplink_thread_entry(void *p1, void *p2, void *p3)
                     (unsigned int)recv_drop,
                     hal_ble_is_ready(),
                     hal_ble_get_mtu());
+#endif
             sent_ok = 0;
             sent_drop = 0;
             recv_ok = 0;
