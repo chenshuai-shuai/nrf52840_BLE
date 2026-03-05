@@ -22,6 +22,7 @@ LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_INF);
 #define AUDIO_PKT_MAGIC0 0xA5
 #define AUDIO_PKT_MAGIC1 0x5A
 #define AUDIO_PAYLOAD_MAX 200
+#define AUDIO_MAX_FRAGS 30
 #endif
 
 #ifndef DOWNLINK_TEST
@@ -38,8 +39,6 @@ struct audio_pkt_hdr {
 } __packed;
 
 #ifdef CONFIG_SPK_STREAM
-#include "hal_ble.h"
-
 #define SPK_STREAM_STACK_SIZE 4096
 #define SPK_STREAM_PRIO 4
 #define SPK_PLAY_STACK_SIZE 2048
@@ -100,7 +99,7 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
         g_spk_accept_audio = false;
         g_nrf_ready_sent = false;
         mic_drop_queue();
-        if (hal_ble_is_ready()) {
+        if (app_uplink_service_is_ready()) {
             const char ready[] = "NRF_READY";
             (void)app_uplink_publish(APP_DATA_PART_CTRL,
                                      APP_UPLINK_PRIO_HIGH,
@@ -122,7 +121,6 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
 }
 
 static uint8_t g_spk_stream_buf[SPK_FRAME_BYTES * 8];
-static uint8_t g_spk_pkt_buf[244];
 
 static void spk_rx_entry(void *p1, void *p2, void *p3)
 {
@@ -135,8 +133,9 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
     int64_t last_audio_ms = 0;
 
     while (1) {
-        int r = hal_ble_recv(g_spk_pkt_buf, sizeof(g_spk_pkt_buf), 1000);
-        if (r <= 0) {
+        app_data_record_t dl_rec;
+        int r = app_uplink_take_downlink(&dl_rec, 1000);
+        if (r != HAL_OK) {
             if (g_spk_accept_audio && g_spk_test_len > 0) {
                 int64_t now = k_uptime_get();
                 if (last_audio_ms != 0 && (now - last_audio_ms) > 600) {
@@ -149,14 +148,20 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
             }
             continue;
         }
-        if (handle_ctrl_msg(g_spk_pkt_buf, r)) {
+        const uint8_t *pkt = dl_rec.data;
+        int pkt_len = (int)dl_rec.len;
+
+        if (pkt_len <= 0 || pkt == NULL) {
             continue;
         }
-        if (r < (int)sizeof(struct audio_pkt_hdr)) {
+        if (handle_ctrl_msg(pkt, pkt_len)) {
+            continue;
+        }
+        if (pkt_len < (int)sizeof(struct audio_pkt_hdr)) {
             continue;
         }
 
-        struct audio_pkt_hdr *hdr = (struct audio_pkt_hdr *)g_spk_pkt_buf;
+        struct audio_pkt_hdr *hdr = (struct audio_pkt_hdr *)pkt;
         if (hdr->magic0 != AUDIO_PKT_MAGIC0 || hdr->magic1 != AUDIO_PKT_MAGIC1) {
             continue;
         }
@@ -165,7 +170,7 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
         }
 
         uint16_t payload_len = sys_get_le16((uint8_t *)&hdr->payload_len);
-        uint16_t avail = (uint16_t)(r - sizeof(struct audio_pkt_hdr));
+        uint16_t avail = (uint16_t)(pkt_len - sizeof(struct audio_pkt_hdr));
         if (payload_len > avail) {
             payload_len = avail;
         }
@@ -194,7 +199,7 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
         if (space > 0) {
             size_t take = (payload_len <= space) ? payload_len : space;
             memcpy(g_spk_test_buf + g_spk_test_len,
-                   g_spk_pkt_buf + sizeof(struct audio_pkt_hdr),
+                   pkt + sizeof(struct audio_pkt_hdr),
                    take);
             g_spk_test_len += take;
             if (take < payload_len) {
@@ -345,7 +350,7 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             spk_running = false;
         }
         const char done[] = "PLAY_DONE";
-        if (hal_ble_is_ready()) {
+        if (app_uplink_service_is_ready()) {
             (void)app_uplink_publish(APP_DATA_PART_CTRL,
                                      APP_UPLINK_PRIO_HIGH,
                                      done,
@@ -435,7 +440,7 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
 
         if (g_spk_buf_full) {
             size_t used = k_msgq_num_used_get(&g_spk_frame_q);
-            if (used <= SPK_BUF_LOW_WATER && hal_ble_is_ready()) {
+            if (used <= SPK_BUF_LOW_WATER && app_uplink_service_is_ready()) {
                 const char low[] = "BUF_LOW";
                 (void)app_uplink_publish(APP_DATA_PART_CTRL,
                                          APP_UPLINK_PRIO_HIGH,
@@ -469,7 +474,7 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
 
         if (eos_pending && k_msgq_num_used_get(&g_spk_frame_q) == 0 && pending_buf == NULL) {
             const char done[] = "PLAY_DONE";
-            if (hal_ble_is_ready()) {
+            if (app_uplink_service_is_ready()) {
                 (void)app_uplink_publish(APP_DATA_PART_CTRL,
                                          APP_UPLINK_PRIO_HIGH,
                                          done,
@@ -628,8 +633,6 @@ static void spk_boot_tone_play(void)
 #endif
 
 #ifdef CONFIG_BLE_TEST
-#include "hal_ble.h"
-
 #define BLE_TEST_STACK_SIZE 2048
 #define BLE_TEST_PRIO 3
 
@@ -642,25 +645,13 @@ static void ble_test_entry(void *p1, void *p2, void *p3)
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
 
-    int ret = hal_ble_init();
-    if (ret != HAL_OK) {
-        LOG_ERR("hal_ble_init failed: %d", ret);
-        return;
-    }
-
-    ret = hal_ble_start();
-    if (ret != HAL_OK) {
-        LOG_ERR("hal_ble_start failed: %d", ret);
-        return;
-    }
-
-    LOG_INF("BLE test thread started");
+    LOG_INF("BLE test thread started (via uplink gateway)");
 
     while (1) {
-        uint8_t buf[244];
-        int r = hal_ble_recv(buf, sizeof(buf), 1000);
-        if (r > 0) {
-            LOG_INF("BLE RX %d bytes", r);
+        app_data_record_t rec;
+        int r = app_uplink_take_downlink(&rec, 1000);
+        if (r == HAL_OK) {
+            LOG_INF("BLE RX %u bytes part=%d", (unsigned)rec.len, (int)rec.part);
         }
     }
 }
@@ -668,7 +659,6 @@ static void ble_test_entry(void *p1, void *p2, void *p3)
 
 #ifdef CONFIG_MIC_TEST
 #include "hal_mic.h"
-#include "hal_ble.h"
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/kernel.h>
 
@@ -698,32 +688,33 @@ static int audio_send_frame(const uint8_t *pcm, size_t len, uint16_t seq)
         return HAL_EINVAL;
     }
 
-    int mtu = hal_ble_get_mtu();
-    if (mtu < 23) {
-        mtu = 23;
-    }
+    size_t uplink_max = app_uplink_max_payload();
     size_t payload_max = AUDIO_PAYLOAD_MAX;
-    if (mtu > 3) {
-        size_t att_payload = (size_t)(mtu - 3);
-        if (att_payload > sizeof(struct audio_pkt_hdr)) {
-            size_t dyn_max = att_payload - sizeof(struct audio_pkt_hdr);
-            if (dyn_max < payload_max) {
-                payload_max = dyn_max;
-            }
-        } else {
-            return HAL_EINVAL;
+    if (uplink_max > sizeof(struct audio_pkt_hdr)) {
+        size_t dyn_max = uplink_max - sizeof(struct audio_pkt_hdr);
+        if (dyn_max < payload_max) {
+            payload_max = dyn_max;
         }
+    } else {
+        return HAL_EBUSY;
     }
 
     uint16_t frame_seq = seq;
     uint8_t frag_cnt = (uint8_t)((len + payload_max - 1) / payload_max);
+    if (frag_cnt == 0U || frag_cnt > AUDIO_MAX_FRAGS) {
+        return HAL_EINVAL;
+    }
+
+    static uint8_t s_pkts[AUDIO_MAX_FRAGS][sizeof(struct audio_pkt_hdr) + AUDIO_PAYLOAD_MAX];
+    static const uint8_t *s_pkt_ptrs[AUDIO_MAX_FRAGS];
+    static uint16_t s_pkt_lens[AUDIO_MAX_FRAGS];
     size_t offset = 0;
 
     for (uint8_t frag = 0; frag < frag_cnt; frag++) {
         size_t remaining = len - offset;
         size_t chunk = (remaining > payload_max) ? payload_max : remaining;
 
-        uint8_t pkt[sizeof(struct audio_pkt_hdr) + AUDIO_PAYLOAD_MAX];
+        uint8_t *pkt = s_pkts[frag];
         struct audio_pkt_hdr *hdr = (struct audio_pkt_hdr *)pkt;
         hdr->magic0 = AUDIO_PKT_MAGIC0;
         hdr->magic1 = AUDIO_PKT_MAGIC1;
@@ -733,19 +724,18 @@ static int audio_send_frame(const uint8_t *pcm, size_t len, uint16_t seq)
         sys_put_le16((uint16_t)chunk, (uint8_t *)&hdr->payload_len);
 
         memcpy(pkt + sizeof(struct audio_pkt_hdr), pcm + offset, chunk);
-
-        int ret = hal_ble_send(pkt, sizeof(struct audio_pkt_hdr) + chunk, 0);
-        if (ret != HAL_OK) {
-            return ret;
-        }
+        s_pkt_ptrs[frag] = pkt;
+        s_pkt_lens[frag] = (uint16_t)(sizeof(struct audio_pkt_hdr) + chunk);
 
         offset += chunk;
-        if (frag_cnt > 1) {
-            k_usleep(200);
-        }
     }
 
-    return HAL_OK;
+    return app_uplink_publish_batch(APP_DATA_PART_AUDIO_UP,
+                                    APP_UPLINK_PRIO_NORMAL,
+                                    s_pkt_ptrs,
+                                    s_pkt_lens,
+                                    frag_cnt,
+                                    (uint32_t)k_uptime_get());
 }
 
 static void mic_capture_entry(void *p1, void *p2, void *p3)
@@ -848,17 +838,27 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
             goto log_stats;
         }
 
-        /* Real-time path: do not backlog audio before BLE notify channel is ready. */
-        if (!hal_ble_is_ready() || hal_ble_get_mtu() < 23) {
+        /* Real-time path: do not backlog audio before uplink transport is ready. */
+        if (!app_uplink_service_is_ready() ||
+            app_uplink_max_payload() <= sizeof(struct audio_pkt_hdr)) {
             frames_drop++;
             (void)hal_mic_release(msg.buf);
             goto log_stats;
         }
 
+        size_t payload_max = AUDIO_PAYLOAD_MAX;
+        size_t uplink_max = app_uplink_max_payload();
+        if (uplink_max > sizeof(struct audio_pkt_hdr)) {
+            size_t dyn_max = uplink_max - sizeof(struct audio_pkt_hdr);
+            if (dyn_max < payload_max) {
+                payload_max = dyn_max;
+            }
+        }
+
         int ret = audio_send_frame((const uint8_t *)msg.buf, msg.len, msg.seq);
         if (ret == HAL_OK) {
             frames_sent++;
-            pkts_sent += (uint32_t)((msg.len + AUDIO_PAYLOAD_MAX - 1) / AUDIO_PAYLOAD_MAX);
+            pkts_sent += (uint32_t)((msg.len + payload_max - 1) / payload_max);
             bytes_sent += (uint32_t)msg.len;
         } else {
             frames_drop++;
@@ -870,9 +870,10 @@ log_stats:
         {
             uint64_t now = k_uptime_get();
             if (now - last_log >= 1000) {
-                LOG_INF("MIC stream: frames=%u sent=%u drop=%u pkts=%u bytes=%u ready=%d mtu=%d",
+                LOG_INF("MIC stream: frames=%u sent=%u drop=%u pkts=%u bytes=%u ready=%d max_tx=%u",
                         frames, frames_sent, frames_drop, pkts_sent, bytes_sent,
-                        hal_ble_is_ready(), hal_ble_get_mtu());
+                        app_uplink_service_is_ready(),
+                        (unsigned)app_uplink_max_payload());
                 last_log = now;
             }
         }

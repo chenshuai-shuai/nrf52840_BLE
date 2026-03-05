@@ -20,12 +20,21 @@ typedef enum {
 int app_uplink_service_start(void);
 int app_uplink_service_stop(void);
 bool app_uplink_service_is_ready(void);
+size_t app_uplink_max_payload(void);
+int app_uplink_take_downlink(app_data_record_t *out, int timeout_ms);
 
 int app_uplink_publish(app_data_part_t part,
                        app_uplink_prio_t prio,
                        const void *payload,
                        size_t len,
                        uint32_t ts_ms);
+
+int app_uplink_publish_batch(app_data_part_t part,
+                             app_uplink_prio_t prio,
+                             const uint8_t *const *payloads,
+                             const uint16_t *lens,
+                             size_t count,
+                             uint32_t ts_ms);
 
 #ifdef __cplusplus
 }

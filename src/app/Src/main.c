@@ -9,7 +9,7 @@
 #include "app_bus.h"
 #include "boot_tone.h"
 #include "system_state.h"
-#include "app_data_store.h"
+#include "app_db.h"
 
 #include <zephyr/logging/log.h>
 
@@ -24,7 +24,7 @@ int main(void)
     }
 
     system_state_init();
-    (void)app_data_store_init();
+    (void)app_db_init();
     ret = app_bus_start();
     if (ret != HAL_OK) {
         printk("app_bus_start failed: %d\n", ret);
