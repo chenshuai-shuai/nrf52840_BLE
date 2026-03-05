@@ -9,6 +9,7 @@
 #include "system_state.h"
 #include "app_bus.h"
 #include "app_uplink_service.h"
+#include "hal_imu.h"
 #include "gh3x2x_demo_algo_call.h"
 #include "goodix_hba.h"
 
@@ -49,6 +50,14 @@ LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
 #define APP_PPG_HR_ACQ_STUCK_MIN_MS       15000U
 #define APP_PPG_HR_ACQ_FIRST_RETRY_MS     0U
 #define APP_PPG_LOG_PERIOD_MS             5000U
+#define APP_PPG_HR_AGGR_LOCK_WINDOW_MS    12000U
+#define APP_PPG_HR_AGGR_LOCK_CONF         72
+#define APP_PPG_HR_AGGR_LOCK_STABLE_N     2U
+#define APP_PPG_HR_SCENE_UPDATE_MS        1000U
+#define APP_PPG_HR_SCENE_SWITCH_UP_N      3U
+#define APP_PPG_HR_SCENE_SWITCH_DOWN_N    5U
+#define APP_PPG_HR_MOTION_THR_UP          420
+#define APP_PPG_HR_MOTION_THR_DOWN        220
 
 typedef enum {
     APP_PPG_MODE_ACQUIRE = 0,
@@ -87,6 +96,16 @@ static int32_t i32_abs_diff(int32_t a, int32_t b)
     return (a >= b) ? (a - b) : (b - a);
 }
 
+static uint32_t ppg_motion_score_from_imu(const imu_sample_t *imu)
+{
+    int32_t ax = (int32_t)imu->accel_x;
+    int32_t ay = (int32_t)imu->accel_y;
+    int32_t az = (int32_t)imu->accel_z;
+    int32_t gmag_l1 = i32_abs_diff(ax, 0) + i32_abs_diff(ay, 0) + i32_abs_diff(az, 0);
+    int32_t score = i32_abs_diff(gmag_l1, 2048);
+    return (score < 0) ? 0U : (uint32_t)score;
+}
+
 static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
 {
     ARG_UNUSED(p1);
@@ -113,6 +132,10 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
     int64_t last_recover_ms = 0;
     int64_t last_valid_ms = start_ms;
     int64_t last_result_ms = start_ms;
+    int64_t last_scene_eval_ms = start_ms;
+    uint8_t cur_scene = (uint8_t)HBA_SCENES_STILL_REST;
+    uint8_t motion_up_cnt = 0;
+    uint8_t motion_down_cnt = 0;
     ppg_hr_set_state(APP_PPG_HR_ST_LOCKING);
 
     while (1) {
@@ -133,6 +156,44 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
             if (warmup_done && !warmup_done_logged) {
                 LOG_INF("ppg hr: warmup done, acquiring lock");
                 warmup_done_logged = true;
+            }
+
+            if ((uint32_t)(now_ms - last_scene_eval_ms) >= APP_PPG_HR_SCENE_UPDATE_MS) {
+                imu_sample_t imu = {0};
+                uint32_t imu_ts = 0;
+                if (hal_imu_get_latest(&imu, &imu_ts) == HAL_OK) {
+                    ARG_UNUSED(imu_ts);
+                    uint32_t motion = ppg_motion_score_from_imu(&imu);
+                    if (motion >= APP_PPG_HR_MOTION_THR_UP) {
+                        if (motion_up_cnt < 255U) {
+                            motion_up_cnt++;
+                        }
+                        motion_down_cnt = 0;
+                    } else if (motion <= APP_PPG_HR_MOTION_THR_DOWN) {
+                        if (motion_down_cnt < 255U) {
+                            motion_down_cnt++;
+                        }
+                        motion_up_cnt = 0;
+                    } else {
+                        motion_up_cnt = 0;
+                        motion_down_cnt = 0;
+                    }
+
+                    if ((cur_scene == (uint8_t)HBA_SCENES_STILL_REST) &&
+                        (motion_up_cnt >= APP_PPG_HR_SCENE_SWITCH_UP_N)) {
+                        (void)GH3X2X_HbAlgorithmScenarioConfig((GU8)HBA_SCENES_DAILY_LIFE);
+                        cur_scene = (uint8_t)HBA_SCENES_DAILY_LIFE;
+                        motion_up_cnt = 0;
+                        LOG_INF("ppg hr: scenario -> DAILY_LIFE (motion=%u)", (unsigned int)motion);
+                    } else if ((cur_scene == (uint8_t)HBA_SCENES_DAILY_LIFE) &&
+                               (motion_down_cnt >= APP_PPG_HR_SCENE_SWITCH_DOWN_N)) {
+                        (void)GH3X2X_HbAlgorithmScenarioConfig((GU8)HBA_SCENES_STILL_REST);
+                        cur_scene = (uint8_t)HBA_SCENES_STILL_REST;
+                        motion_down_cnt = 0;
+                        LOG_INF("ppg hr: scenario -> STILL_REST (motion=%u)", (unsigned int)motion);
+                    }
+                }
+                last_scene_eval_ms = now_ms;
             }
 
             bool valid_acq = hr_is_physically_valid(&sample);
@@ -160,9 +221,12 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
             }
 
             uint32_t elapsed_ms = (uint32_t)(now_ms - start_ms);
+            bool aggressive_lock = (elapsed_ms <= APP_PPG_HR_AGGR_LOCK_WINDOW_MS);
+            int32_t lock_conf_min = aggressive_lock ? APP_PPG_HR_AGGR_LOCK_CONF : APP_PPG_HR_CONF_LOCK;
+            uint32_t lock_stable_n = aggressive_lock ? APP_PPG_HR_AGGR_LOCK_STABLE_N : 4U;
             bool lock_candidate = warmup_done &&
                                   valid_acq &&
-                                  sample.confidence >= APP_PPG_HR_CONF_LOCK &&
+                                  sample.confidence >= lock_conf_min &&
                                   sample.hr_bpm >= APP_PPG_HR_ACQ_MIN_BPM &&
                                   sample.hr_bpm <= APP_PPG_HR_ACQ_MAX_BPM;
             bool fast_lock_candidate = (elapsed_ms >= APP_PPG_HR_FAST_LOCK_MIN_MS) &&
@@ -192,7 +256,7 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                 }
 
                 if (mode == APP_PPG_MODE_ACQUIRE &&
-                    (stable_cnt >= 4U ||
+                    (stable_cnt >= lock_stable_n ||
                      (fast_lock_candidate && stable_cnt >= APP_PPG_HR_FAST_LOCK_N) ||
                      (relax_lock_candidate && stable_cnt >= APP_PPG_HR_RELAX_LOCK_STABLE_N))) {
                     mode = APP_PPG_MODE_TRACK;
@@ -296,6 +360,7 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                         acq_low_cnt = 0;
                         last_valid_ms = start_ms;
                         last_recover_ms = now_ms;
+                        last_scene_eval_ms = start_ms;
                         recover_cnt++;
                         LOG_WRN("ppg hr: recovery done #%u, warmup restart",
                                 (unsigned int)recover_cnt);
