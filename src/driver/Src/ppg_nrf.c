@@ -36,6 +36,8 @@ void ppg_nrf_on_hr_result(int32_t hr_bpm, int32_t confidence, int32_t snr, uint3
 {
     hal_ppg_sample_t sample = {
         .hr_bpm = hr_bpm,
+        .hrv = 0,
+        .hrv_confidence = 0,
         .confidence = confidence,
         .snr = snr,
         .frame_id = frame_id,
@@ -48,6 +50,13 @@ void ppg_nrf_on_hr_result(int32_t hr_bpm, int32_t confidence, int32_t snr, uint3
         (void)k_msgq_get(&g_ppg_sample_q, &drop, K_NO_WAIT);
         (void)k_msgq_put(&g_ppg_sample_q, &sample, K_NO_WAIT);
     }
+}
+
+void ppg_nrf_on_hrv_result(int32_t hrv, int32_t hrv_confidence, uint32_t frame_id)
+{
+    ARG_UNUSED(hrv);
+    ARG_UNUSED(hrv_confidence);
+    ARG_UNUSED(frame_id);
 }
 
 static void gh3026_irq_worker(void *a, void *b, void *c)

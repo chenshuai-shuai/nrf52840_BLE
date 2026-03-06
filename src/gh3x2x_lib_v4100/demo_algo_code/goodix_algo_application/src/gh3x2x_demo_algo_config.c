@@ -33,7 +33,8 @@ STAlgoChnlMap g_stHbaAlgoChnlMap;
 
 /* hrv algorithm */
 #if (__USE_GOODIX_HRV_ALGORITHM__)
-GS32 g_nHrvParamsArr[GOODIX_HRV_PARAMS_NUM_MAX] = {0, 20, 10, 3, 3};
+/* param[0] is HRV mode/strategy selector in Goodix HRV init path. */
+GS32 g_nHrvParamsArr[GOODIX_HRV_PARAMS_NUM_MAX] = {1, 20, 10, 3, 3};
 #endif
 
 /* spo2 algorithm */

@@ -19,6 +19,13 @@ __attribute__((weak)) void ppg_nrf_on_hr_result(int32_t hr_bpm, int32_t confiden
     ARG_UNUSED(frame_id);
 }
 
+__attribute__((weak)) void ppg_nrf_on_hrv_result(int32_t hrv, int32_t hrv_confidence, uint32_t frame_id)
+{
+    ARG_UNUSED(hrv);
+    ARG_UNUSED(hrv_confidence);
+    ARG_UNUSED(frame_id);
+}
+
 /**
  * @fn     void GH3X2X_AlgoLog(char *log_string)
  * 
@@ -169,7 +176,24 @@ void GH3X2X_Spo2AlgorithmResultReport(STGh3x2xAlgoResult * pstAlgoResult, GU32 l
 void GH3X2X_HrvAlgorithmResultReport(STGh3x2xAlgoResult * pstAlgoResult, GU32 lubFrameId)
 {
 #if (__USE_GOODIX_HRV_ALGORITHM__)
+    static GU32 s_hrv_log_ms = 0;
+    GU32 now_ms = (GU32)k_uptime_get();
+    if ((now_ms - s_hrv_log_ms) >= 3000U) {
+        printk("[gh3x2x_algo]: hrv_cb upd=%u out0=%d out1=%d out2=%d out3=%d num=%d conf=%d frame=%u\n",
+               (unsigned int)pstAlgoResult->uchUpdateFlag,
+               (int)pstAlgoResult->snResult[0],
+               (int)pstAlgoResult->snResult[1],
+               (int)pstAlgoResult->snResult[2],
+               (int)pstAlgoResult->snResult[3],
+               (int)pstAlgoResult->snResult[4],
+               (int)pstAlgoResult->snResult[5],
+               (unsigned int)lubFrameId);
+        s_hrv_log_ms = now_ms;
+    }
     /* code implement by user */
+    ppg_nrf_on_hrv_result((int32_t)pstAlgoResult->snResult[0],
+                          (int32_t)pstAlgoResult->snResult[5],
+                          (uint32_t)lubFrameId);
     //SLAVER_LOG("snHrvOut0=%d,snHrvOut1=%d,snHrvOut2=%d,snHrvOut3=%d,snHrvNum=%d,snHrvConfi=%d\r\n",
     //          stHrvAlgoRes[0].snHrvOut0,stHrvAlgoRes[0].snHrvOut1,stHrvAlgoRes[0].snHrvOut2,stHrvAlgoRes[0].snHrvOut3,stHrvAlgoRes[0].snHrvNum,stHrvAlgoRes[0].snHrvNum);
     //GOODIX_PLANFROM_HRV_RESULT_REPORT_ENTITY();

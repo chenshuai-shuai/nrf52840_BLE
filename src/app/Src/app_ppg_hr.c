@@ -58,6 +58,16 @@ LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
 #define APP_PPG_HR_SCENE_SWITCH_DOWN_N    5U
 #define APP_PPG_HR_MOTION_THR_UP          420
 #define APP_PPG_HR_MOTION_THR_DOWN        220
+#define APP_PPG_HRV_EST_WIN_SZ            16U
+#define APP_PPG_HRV_EST_MIN_VALID         6U
+#define APP_PPG_HRV_EST_UPDATE_MS         3000U
+#define APP_PPG_HRV_EST_SCALE_NUM         6
+#define APP_PPG_HRV_EST_SCALE_DEN         1
+#define APP_PPG_HRV_EST_MIN_REST          20
+#define APP_PPG_HRV_EST_MAX_REST          90
+#define APP_PPG_HRV_EST_MIN_MOTION        15
+#define APP_PPG_HRV_EST_MAX_MOTION        120
+#define APP_PPG_HRV_CONF_GATE_MIN         60
 
 typedef enum {
     APP_PPG_MODE_ACQUIRE = 0,
@@ -94,6 +104,129 @@ static bool hr_is_physically_valid(const hal_ppg_sample_t *s)
 static int32_t i32_abs_diff(int32_t a, int32_t b)
 {
     return (a >= b) ? (a - b) : (b - a);
+}
+
+static uint32_t u32_isqrt(uint32_t x)
+{
+    uint32_t op = x;
+    uint32_t res = 0;
+    uint32_t one = 1uL << 30;
+
+    while (one > op) {
+        one >>= 2;
+    }
+    while (one != 0) {
+        if (op >= res + one) {
+            op -= res + one;
+            res += (one << 1);
+        }
+        res >>= 1;
+        one >>= 2;
+    }
+    return res;
+}
+
+static int32_t i32_clamp(int32_t v, int32_t lo, int32_t hi)
+{
+    if (v < lo) {
+        return lo;
+    }
+    if (v > hi) {
+        return hi;
+    }
+    return v;
+}
+
+static void ppg_hr_apply_estimated_hrv(hal_ppg_sample_t *s,
+                                       int32_t *ibi_hist_ms,
+                                       uint8_t *hist_cnt,
+                                       uint8_t *hist_idx,
+                                       int32_t *hrv_hold,
+                                       int32_t *hrv_conf_hold,
+                                       int64_t *last_hrv_update_ms,
+                                       bool motion_mode)
+{
+    if (s->hr_bpm <= 0) {
+        s->hrv = *hrv_hold;
+        s->hrv_confidence = *hrv_conf_hold;
+        return;
+    }
+
+    /* Convert BPM to IBI(ms), capped to sane range for small integer math. */
+    int32_t ibi_ms = 60000 / s->hr_bpm;
+    if (ibi_ms < 300) {
+        ibi_ms = 300;
+    } else if (ibi_ms > 2000) {
+        ibi_ms = 2000;
+    }
+
+    ibi_hist_ms[*hist_idx] = ibi_ms;
+    *hist_idx = (uint8_t)((*hist_idx + 1U) % APP_PPG_HRV_EST_WIN_SZ);
+    if (*hist_cnt < APP_PPG_HRV_EST_WIN_SZ) {
+        (*hist_cnt)++;
+    }
+
+    if (*hist_cnt < APP_PPG_HRV_EST_MIN_VALID) {
+        s->hrv = 0;
+        s->hrv_confidence = 0;
+        return;
+    }
+
+    /* RMSSD from IBI sequence as engineering approximation of HRV. */
+    uint32_t sum_sq = 0;
+    uint32_t pairs = 0;
+    uint8_t n = *hist_cnt;
+    uint8_t start = (uint8_t)((*hist_idx + APP_PPG_HRV_EST_WIN_SZ - n) % APP_PPG_HRV_EST_WIN_SZ);
+    int32_t prev = ibi_hist_ms[start];
+    for (uint8_t i = 1; i < n; i++) {
+        uint8_t pos = (uint8_t)((start + i) % APP_PPG_HRV_EST_WIN_SZ);
+        int32_t cur = ibi_hist_ms[pos];
+        int32_t d = cur - prev;
+        sum_sq += (uint32_t)(d * d);
+        pairs++;
+        prev = cur;
+    }
+
+    if (pairs == 0U) {
+        s->hrv = 0;
+        s->hrv_confidence = 0;
+        return;
+    }
+
+    int32_t rmssd = (int32_t)u32_isqrt(sum_sq / pairs);
+
+    int32_t conf = s->confidence;
+    if (conf < 0) {
+        conf = 0;
+    } else if (conf > 100) {
+        conf = 100;
+    }
+    if (*hist_cnt < APP_PPG_HRV_EST_WIN_SZ) {
+        conf = (conf * (int32_t)(*hist_cnt)) / (int32_t)APP_PPG_HRV_EST_WIN_SZ;
+    }
+
+    /* Engineering calibration to map estimate into practical display range. */
+    int32_t hrv_cal = (rmssd * APP_PPG_HRV_EST_SCALE_NUM) / APP_PPG_HRV_EST_SCALE_DEN;
+    if (motion_mode) {
+        hrv_cal = i32_clamp(hrv_cal, APP_PPG_HRV_EST_MIN_MOTION, APP_PPG_HRV_EST_MAX_MOTION);
+    } else {
+        hrv_cal = i32_clamp(hrv_cal, APP_PPG_HRV_EST_MIN_REST, APP_PPG_HRV_EST_MAX_REST);
+    }
+
+    if (conf < APP_PPG_HRV_CONF_GATE_MIN) {
+        hrv_cal = 0;
+    }
+
+    int64_t now_ms = k_uptime_get();
+    if (((uint32_t)(now_ms - *last_hrv_update_ms) >= APP_PPG_HRV_EST_UPDATE_MS) ||
+        (*last_hrv_update_ms == 0)) {
+        *hrv_hold = hrv_cal;
+        *hrv_conf_hold = conf;
+        *last_hrv_update_ms = now_ms;
+    }
+
+    s->hrv = *hrv_hold;
+    s->hrv_confidence = *hrv_conf_hold;
 }
 
 static uint32_t ppg_motion_score_from_imu(const imu_sample_t *imu)
@@ -136,6 +269,12 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
     uint8_t cur_scene = (uint8_t)HBA_SCENES_STILL_REST;
     uint8_t motion_up_cnt = 0;
     uint8_t motion_down_cnt = 0;
+    int32_t hrv_ibi_hist_ms[APP_PPG_HRV_EST_WIN_SZ] = {0};
+    uint8_t hrv_hist_cnt = 0;
+    uint8_t hrv_hist_idx = 0;
+    int32_t hrv_hold = 0;
+    int32_t hrv_conf_hold = 0;
+    int64_t last_hrv_update_ms = 0;
     ppg_hr_set_state(APP_PPG_HR_ST_LOCKING);
 
     while (1) {
@@ -144,9 +283,20 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
         if (ret == HAL_OK) {
             int64_t now_ms = k_uptime_get();
             last_result_ms = now_ms;
+
+            ppg_hr_apply_estimated_hrv(&sample,
+                                       hrv_ibi_hist_ms,
+                                       &hrv_hist_cnt,
+                                       &hrv_hist_idx,
+                                       &hrv_hold,
+                                       &hrv_conf_hold,
+                                       &last_hrv_update_ms,
+                                       cur_scene != (uint8_t)HBA_SCENES_STILL_REST);
 #if IS_ENABLED(CONFIG_PPG_TUNE_MODE)
-            LOG_INF("ppg raw: hr=%d conf=%d snr=%d frame=%u ts=%u",
+            LOG_INF("ppg raw: hr=%d hrv=%d hrv_conf=%d conf=%d snr=%d frame=%u ts=%u",
                     (int)sample.hr_bpm,
+                    (int)sample.hrv,
+                    (int)sample.hrv_confidence,
                     (int)sample.confidence,
                     (int)sample.snr,
                     (unsigned int)sample.frame_id,
@@ -387,9 +537,11 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
             valid_out_cnt++;
             int64_t now_log_ms = k_uptime_get();
             if ((uint32_t)(now_log_ms - last_ppg_log_ms) >= APP_PPG_LOG_PERIOD_MS) {
-                LOG_INF("ppg hr: valid=%u bpm=%d conf=%d snr=%d frame=%u",
+                LOG_INF("ppg hr: valid=%u bpm=%d hrv=%d hrv_conf=%d conf=%d snr=%d frame=%u",
                         (unsigned int)valid_out_cnt,
                         (int)sample.hr_bpm,
+                        (int)sample.hrv,
+                        (int)sample.hrv_confidence,
                         (int)sample.confidence,
                         (int)sample.snr,
                         (unsigned int)sample.frame_id);
@@ -419,6 +571,8 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                 int16_t snr;
                 uint32_t frame_id;
                 uint32_t ts_ms;
+                int16_t hrv;
+                int16_t hrv_conf;
             } ppg_pkt = {
                 .ver = 1,
                 .type = 1,
@@ -427,6 +581,8 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                 .snr = (int16_t)sample.snr,
                 .frame_id = sample.frame_id,
                 .ts_ms = sample.timestamp_ms,
+                .hrv = (int16_t)sample.hrv,
+                .hrv_conf = (int16_t)sample.hrv_confidence,
             };
             int uret = app_uplink_publish(APP_DATA_PART_PPG,
                                           APP_UPLINK_PRIO_HIGH,

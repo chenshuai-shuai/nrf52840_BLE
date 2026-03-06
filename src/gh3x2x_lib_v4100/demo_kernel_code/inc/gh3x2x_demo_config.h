@@ -56,7 +56,7 @@
 
 /* ppg function type */
 #define __FUNC_TYPE_HR_ENABLE__             (1)    /**< hb function tye */
-#define __FUNC_TYPE_HRV_ENABLE__            (0)    /**< hrv function tye */
+#define __FUNC_TYPE_HRV_ENABLE__            (1)    /**< hrv function tye */
 #define __FUNC_TYPE_HSM_ENABLE__            (0)    /**< hsm function tye */
 #define __FUNC_TYPE_SPO2_ENABLE__           (1)    /**< spo2 function tye */
 #define __FUNC_TYPE_BT_ENABLE__             (0)    /**< bt function tye */

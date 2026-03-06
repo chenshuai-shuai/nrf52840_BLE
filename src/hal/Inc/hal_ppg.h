@@ -16,6 +16,8 @@ typedef struct {
 
 typedef struct {
     int32_t hr_bpm;
+    int32_t hrv;
+    int32_t hrv_confidence;
     int32_t confidence;
     int32_t snr;
     uint32_t frame_id;
