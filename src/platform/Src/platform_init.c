@@ -1,4 +1,4 @@
-﻿#include <stdbool.h>
+#include <stdbool.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/printk.h>
@@ -19,7 +19,7 @@
 
 #define PLATFORM_NAME_DEFAULT "nrf52840"
 
-LOG_MODULE_REGISTER(platform_init, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(platform_init, LOG_LEVEL_WRN);
 
 static int platform_nrf52840_init(void)
 {

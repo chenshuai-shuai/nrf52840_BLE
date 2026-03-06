@@ -13,7 +13,7 @@
 #include "gh3x2x_demo_algo_call.h"
 #include "goodix_hba.h"
 
-LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_WRN);
 
 #define APP_PPG_HR_STACK_SIZE 2304
 #define APP_PPG_HR_PRIORITY   7

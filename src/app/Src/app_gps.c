@@ -12,7 +12,7 @@
 #include "rt_thread.h"
 #include "system_state.h"
 
-LOG_MODULE_REGISTER(app_gps, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_gps, LOG_LEVEL_WRN);
 
 #define GPS_APP_STACK_SIZE 2048
 #define GPS_APP_PRIORITY   8

@@ -10,7 +10,7 @@
 #include "rt_thread.h"
 #include "system_state.h"
 
-LOG_MODULE_REGISTER(app_pm_test, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_pm_test, LOG_LEVEL_WRN);
 
 #if IS_ENABLED(CONFIG_PM_SERVICE_DEBUG_LOG)
 #define PM_DBG_INF(...) LOG_INF(__VA_ARGS__)

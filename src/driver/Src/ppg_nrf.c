@@ -8,7 +8,7 @@
 #include "gh3x2x_demo.h"
 #include "gh3x2x_drv.h"
 
-LOG_MODULE_REGISTER(ppg_nrf, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(ppg_nrf, LOG_LEVEL_WRN);
 
 #define GH3026_THREAD_STACK_SIZE 4096
 #define GH3026_THREAD_PRIORITY   6

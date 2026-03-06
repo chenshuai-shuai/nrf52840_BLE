@@ -10,7 +10,7 @@
 #include "hal_mic.h"
 #include "error.h"
 
-LOG_MODULE_REGISTER(mic_nrf, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(mic_nrf, LOG_LEVEL_WRN);
 
 #define MIC_NODE DT_NODELABEL(pdm0)
 

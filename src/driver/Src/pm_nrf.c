@@ -7,7 +7,7 @@
 #include "hal_pm.h"
 #include "error.h"
 
-LOG_MODULE_REGISTER(pm_nrf, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(pm_nrf, LOG_LEVEL_WRN);
 
 #define PM_NODE DT_NODELABEL(max77658)
 

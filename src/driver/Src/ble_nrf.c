@@ -1,4 +1,4 @@
-﻿#include <string.h>
+#include <string.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/bluetooth/bluetooth.h>
@@ -15,7 +15,7 @@
 #define BLE_RX_MAX_LEN 244
 #define BLE_RX_Q_LEN 8
 
-LOG_MODULE_REGISTER(ble_nrf, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(ble_nrf, LOG_LEVEL_WRN);
 
 #ifndef BLE_RX_VERBOSE
 #define BLE_RX_VERBOSE 0

@@ -7,7 +7,7 @@
 #include "app_db.h"
 #include "error.h"
 
-LOG_MODULE_REGISTER(app_db, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_db, LOG_LEVEL_WRN);
 
 #define APP_DB_KV_CAP 32
 

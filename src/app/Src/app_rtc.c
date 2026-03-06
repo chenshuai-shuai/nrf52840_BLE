@@ -16,7 +16,7 @@
 #include "rt_thread.h"
 #include "app_uplink_service.h"
 
-LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_WRN);
 
 #ifndef AUDIO_PKT_MAGIC0
 #define AUDIO_PKT_MAGIC0 0xA5
@@ -1022,7 +1022,7 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
 log_stats:
         {
             uint64_t now = k_uptime_get();
-            if (now - last_log >= 1000) {
+            if (now - last_log >= 5000) {
 #if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
                 LOG_INF("MIC stream: frames=%u sent=%u drop=%u nrdy=%u send=%u pkts=%u pcm=%u wire=%u ready=%d max_tx=%u",
                         frames, frames_sent, frames_drop, drop_not_ready, drop_send_fail,

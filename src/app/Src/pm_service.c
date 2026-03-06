@@ -10,7 +10,7 @@
 #include "rt_thread.h"
 #include "app_bus.h"
 
-LOG_MODULE_REGISTER(pm_service, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(pm_service, LOG_LEVEL_WRN);
 
 #define PM_SVC_STACK_SIZE 2048
 #define PM_SVC_PRIORITY   7

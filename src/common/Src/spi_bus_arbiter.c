@@ -3,7 +3,7 @@
 
 #include "spi_bus_arbiter.h"
 
-LOG_MODULE_REGISTER(spi_bus_arbiter, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(spi_bus_arbiter, LOG_LEVEL_WRN);
 
 static struct k_mutex g_spi_bus_lock;
 static bool g_spi_bus_inited;
@@ -38,12 +38,6 @@ int spi_bus_lock(spi_bus_client_t client, k_timeout_t timeout)
 
     int64_t now = k_uptime_get();
     if ((now - g_last_log_ms) >= 5000) {
-#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
-        LOG_INF("spi arbiter: ok=%u fail=%u owner=%d",
-                (unsigned int)g_lock_ok_cnt,
-                (unsigned int)g_lock_fail_cnt,
-                (int)g_spi_bus_owner);
-#endif
         g_lock_ok_cnt = 0;
         g_lock_fail_cnt = 0;
         g_last_log_ms = now;

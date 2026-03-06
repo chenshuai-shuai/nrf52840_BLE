@@ -8,7 +8,7 @@
 #include "rt_thread.h"
 #include "error.h"
 
-LOG_MODULE_REGISTER(app_uplink, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_uplink, LOG_LEVEL_WRN);
 
 #define APP_UPLINK_STACK_SIZE 2560
 #define APP_UPLINK_PRIORITY   6

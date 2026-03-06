@@ -11,7 +11,7 @@
 #include "error.h"
 #include "spi_bus_arbiter.h"
 
-LOG_MODULE_REGISTER(imu_nrf, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(imu_nrf, LOG_LEVEL_WRN);
 
 #define IMU_NODE DT_NODELABEL(imu)
 #if !DT_NODE_HAS_STATUS(IMU_NODE, okay)

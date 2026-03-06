@@ -16,7 +16,7 @@
 #include "app_bus.h"
 #include "app_uplink_service.h"
 
-LOG_MODULE_REGISTER(app_lifecycle, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_lifecycle, LOG_LEVEL_WRN);
 
 typedef int (*app_start_fn_t)(void);
 typedef int (*app_stop_fn_t)(void);

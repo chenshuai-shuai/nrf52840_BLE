@@ -8,7 +8,7 @@
 #include "error.h"
 #include "hal_gps.h"
 
-LOG_MODULE_REGISTER(gps_nrf, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(gps_nrf, LOG_LEVEL_WRN);
 
 #define GPS_UART_NODE DT_NODELABEL(uart1)
 #if !DT_NODE_HAS_STATUS(GPS_UART_NODE, okay)

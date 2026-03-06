@@ -41,6 +41,11 @@ if(CONFIG_PM_SERVICE)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/pm_service.c
   )
 endif()
+if(CONFIG_SPK_TEST)
+  list(APPEND APP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_spk_diag.c
+  )
+endif()
 
 set(COMMON_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/common/Src

@@ -8,7 +8,7 @@
 #include "imu_algo.h"
 #include "app_uplink_service.h"
 
-LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_WRN);
 
 #define IMU_TEST_STACK_SIZE 2048
 #define IMU_TEST_PRIORITY   8
@@ -19,7 +19,7 @@ LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
 
 #define IMU_CALIB_SAMPLES 200
 #define IMU_LOG_EVERY_N  200
-#define IMU_ACTION_LOG_EVERY_N 100
+#define IMU_ACTION_LOG_EVERY_N 500
 #define IMU_RATE_LOG_PERIOD_MS 5000
 #define IMU_UPLINK_EVERY_N 20
 #define IMU_PROCESS_DECIM 4
@@ -189,7 +189,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
             bool action_changed = (algo_out.action != last_action);
             bool periodic_log = ((action_cnt % IMU_ACTION_LOG_EVERY_N) == 0U);
             bool changed_log_allowed = action_changed &&
-                                       ((act_now - last_action_log_ms) >= 1000);
+                                       ((act_now - last_action_log_ms) >= 5000);
             if (periodic_log || changed_log_allowed) {
 #if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
                 LOG_INF("imu_action,seq=%u,action=%s,conf=%u",

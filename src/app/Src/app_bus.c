@@ -8,7 +8,7 @@
 #include "error.h"
 #include "rt_thread.h"
 
-LOG_MODULE_REGISTER(app_bus, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_bus, LOG_LEVEL_WRN);
 
 #define APP_BUS_STACK_SIZE 1536
 #define APP_BUS_PRIORITY   9

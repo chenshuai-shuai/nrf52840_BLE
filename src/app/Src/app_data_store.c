@@ -6,7 +6,7 @@
 #include "app_data_store.h"
 #include "error.h"
 
-LOG_MODULE_REGISTER(app_data_store, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_data_store, LOG_LEVEL_WRN);
 
 #define APP_DATA_MAX_PAYLOAD 256
 
