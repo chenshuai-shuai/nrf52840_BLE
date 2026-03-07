@@ -1,0 +1,181 @@
+﻿#include <zephyr/dt-bindings/regulator/nrf5x.h>
+#include <zephyr/dt-bindings/pinctrl/nrf-pinctrl.h>
+
+&uicr {
+    /delete-property/ gpio-as-nreset;
+};
+
+&reg1 {
+    regulator-initial-mode = <NRF5X_REG_MODE_LDO>;
+};
+
+/ {
+    aliases {
+        amp-sd-mode = &amp_sd_mode;
+        amp-pwr-en = &amp_pwr_en;
+        imu-int = &imu_int;
+    };
+
+    chosen {
+        zephyr,settings-partition = &storage_partition;
+    };
+
+    gpio_leds {
+        compatible = "gpio-leds";
+
+        amp_sd_mode: amp-sd-mode {
+            gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;
+        };
+
+        amp_pwr_en: amp-pwr-en {
+            gpios = <&gpio1 10 GPIO_ACTIVE_HIGH>;
+        };
+    };
+
+    gpio_keys {
+        compatible = "gpio-keys";
+
+        imu_int: imu_int {
+            gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+            label = "imu_int";
+        };
+    };
+};
+
+&pinctrl {
+    pdm0_default: pdm0_default {
+        group1 {
+            psels = <NRF_PSEL(PDM_CLK, 0, 26)>,
+                    <NRF_PSEL(PDM_DIN, 1, 0)>;
+            bias-disable;
+        };
+    };
+
+    pdm0_sleep: pdm0_sleep {
+        group1 {
+            psels = <NRF_PSEL(PDM_CLK, 0, 26)>,
+                    <NRF_PSEL(PDM_DIN, 1, 0)>;
+            low-power-enable;
+        };
+    };
+
+    i2s0_default: i2s0_default {
+        group1 {
+            psels = <NRF_PSEL(I2S_SCK_M, 1, 2)>,
+                    <NRF_PSEL(I2S_LRCK_M, 1, 4)>,
+                    <NRF_PSEL(I2S_SDOUT, 1, 6)>,
+                    <NRF_PSEL_DISCONNECTED(I2S_SDIN)>,
+                    <NRF_PSEL_DISCONNECTED(I2S_MCK)>;
+        };
+    };
+
+    spi1_default: spi1_default {
+        group1 {
+            psels = <NRF_PSEL(SPIM_SCK, 0, 24)>,
+                    <NRF_PSEL(SPIM_MOSI, 0, 13)>,
+                    <NRF_PSEL(SPIM_MISO, 0, 20)>;
+        };
+    };
+
+    spi1_sleep: spi1_sleep {
+        group1 {
+            psels = <NRF_PSEL(SPIM_SCK, 0, 24)>,
+                    <NRF_PSEL(SPIM_MOSI, 0, 13)>,
+                    <NRF_PSEL(SPIM_MISO, 0, 20)>;
+            low-power-enable;
+        };
+    };
+
+    i2c0_default: i2c0_default {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SCL, 0, 17)>,
+                    <NRF_PSEL(TWIM_SDA, 0, 15)>;
+            bias-pull-up;
+        };
+    };
+
+    i2c0_sleep: i2c0_sleep {
+        group1 {
+            psels = <NRF_PSEL(TWIM_SCL, 0, 17)>,
+                    <NRF_PSEL(TWIM_SDA, 0, 15)>;
+            low-power-enable;
+            bias-pull-up;
+        };
+    };
+};
+
+&pdm0 {
+    status = "okay";
+    pinctrl-0 = <&pdm0_default>;
+    pinctrl-1 = <&pdm0_sleep>;
+    pinctrl-names = "default", "sleep";
+    queue-size = <16>;
+    clock-source = "PCLK32M";
+};
+
+&i2s0 {
+    status = "okay";
+    clock-source = "PCLK32M";
+    pinctrl-0 = <&i2s0_default>;
+    pinctrl-names = "default";
+};
+
+&i2c0 {
+    status = "okay";
+    clock-frequency = <100000>;
+    pinctrl-0 = <&i2c0_default>;
+    pinctrl-1 = <&i2c0_sleep>;
+    pinctrl-names = "default", "sleep";
+
+    max77658: max77658@48 {
+        compatible = "maxim,max77658";
+        reg = <0x48>;
+        nirq-gpios = <&gpio0 30 GPIO_ACTIVE_LOW>;
+        alrt-gpios = <&gpio0 31 GPIO_ACTIVE_LOW>;
+        status = "okay";
+    };
+};
+
+&spi1 {
+    status = "okay";
+    pinctrl-0 = <&spi1_default>;
+    pinctrl-1 = <&spi1_sleep>;
+    pinctrl-names = "default", "sleep";
+    cs-gpios = <&gpio0 8 GPIO_ACTIVE_LOW>;
+
+    imu: icm42688@0 {
+        compatible = "invensense,icm42688";
+        reg = <0>;
+        spi-max-frequency = <1000000>;
+        spi-cpol;
+        spi-cpha;
+        int-gpios = <&gpio1 9 GPIO_ACTIVE_HIGH>;
+        label = "ICM42688";
+        status = "okay";
+    };
+};
+
+&uart0 { status = "disabled"; };
+&uart1 { status = "disabled"; };
+&i2c1 { status = "disabled"; };
+&pwm0 { status = "disabled"; };
+&spi3 { status = "disabled"; };
+&adc { status = "disabled"; };
+&nfct { status = "disabled"; };
+&usbd { status = "disabled"; };
+&ieee802154 { status = "disabled"; };
+&qspi { status = "disabled"; };
+&mx25r64 { status = "disabled"; };
+
+&led0 { status = "disabled"; };
+&led1 { status = "disabled"; };
+&led2 { status = "disabled"; };
+&led3 { status = "disabled"; };
+&button0 { status = "disabled"; };
+&button1 { status = "disabled"; };
+&button2 { status = "disabled"; };
+&button3 { status = "disabled"; };
+
+&gpio0 {
+    /delete-property/ gpio-reserved-ranges;
+};

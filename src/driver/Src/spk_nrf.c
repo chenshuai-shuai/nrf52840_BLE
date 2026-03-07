@@ -57,11 +57,12 @@ static struct {
 
 static int spk_gpio_init(void)
 {
+    int rc;
 #if AMP_HAS_SD_MODE
     if (!device_is_ready(amp_sd_mode.port)) {
         return HAL_ENODEV;
     }
-    int rc = gpio_pin_configure_dt(&amp_sd_mode, GPIO_OUTPUT_INACTIVE);
+    rc = gpio_pin_configure_dt(&amp_sd_mode, GPIO_OUTPUT_INACTIVE);
     if (rc) {
         return rc;
     }
@@ -71,7 +72,7 @@ static int spk_gpio_init(void)
     if (!device_is_ready(amp_pwr_en.port)) {
         return HAL_ENODEV;
     }
-    int rc = gpio_pin_configure_dt(&amp_pwr_en, GPIO_OUTPUT_INACTIVE);
+    rc = gpio_pin_configure_dt(&amp_pwr_en, GPIO_OUTPUT_INACTIVE);
     if (rc) {
         return rc;
     }

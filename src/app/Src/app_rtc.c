@@ -172,7 +172,7 @@ static size_t audio_encode_ima_adpcm_8k(const int16_t *pcm16,
 #define SPK_FRAME_Q_LEN 24
 #define SPK_BUF_LOW_WATER 2
 #define SPK_PREBUFFER_FRAMES 6
-#define SPK_TEST_BUF_MAX (96 * 1024)
+#define SPK_TEST_BUF_MAX (32 * 1024)
 
 struct spk_frame_msg {
     uint8_t *buf;
@@ -191,7 +191,6 @@ RT_THREAD_STACK_DEFINE(g_spk_play_stack, SPK_PLAY_STACK_SIZE);
 static volatile bool g_spk_buf_full = false;
 static volatile bool g_spk_accept_audio = false;
 static volatile bool g_nrf_ready_sent = false;
-static uint32_t g_spk_rx_frames = 0;
 static uint32_t g_spk_play_frames = 0;
 static uint32_t g_spk_play_errs = 0;
 
@@ -693,7 +692,7 @@ static void mic_level_entry(void *p1, void *p2, void *p3)
 }
 #endif
 
-#ifdef CONFIG_SPK_BOOT_TONE
+#if defined(CONFIG_SPK_BOOT_TONE) && !defined(CONFIG_BOOT_TONE)
 static void spk_boot_tone_play(void)
 {
     int ret = hal_spk_init();
@@ -1097,7 +1096,7 @@ void app_rtc_start(void)
                           "ble_test");
 #endif
 
-#ifdef CONFIG_SPK_BOOT_TONE
+#if defined(CONFIG_SPK_BOOT_TONE) && !defined(CONFIG_BOOT_TONE)
     /* Play boot tone first, then start mic upload. */
     app_state_set(AUDIO_MODE_BOOT);
     printk("boot_tone: start\n");

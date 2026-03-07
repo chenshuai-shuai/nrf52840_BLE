@@ -169,6 +169,65 @@ static struct bt_gatt_cb g_gatt_cb = {
     .att_mtu_updated = att_mtu_updated,
 };
 
+static const char *ble_phy_str(uint8_t phy)
+{
+    switch (phy) {
+    case BT_GAP_LE_PHY_1M:
+        return "1M";
+    case BT_GAP_LE_PHY_2M:
+        return "2M";
+    case BT_GAP_LE_PHY_CODED:
+        return "CODED";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static void ble_log_link_info(struct bt_conn *conn, const char *tag)
+{
+    struct bt_conn_info info;
+    if (bt_conn_get_info(conn, &info) != 0) {
+        LOG_WRN("BLE %s: conn info unavailable", tag);
+        return;
+    }
+
+    if (info.type == BT_CONN_TYPE_LE) {
+        LOG_INF("BLE %s: interval=%u units (%.2f ms) latency=%u timeout=%u units",
+                tag,
+                (unsigned)info.le.interval,
+                (double)info.le.interval * 1.25,
+                (unsigned)info.le.latency,
+                (unsigned)info.le.timeout);
+    }
+
+#if defined(CONFIG_BT_USER_PHY_UPDATE)
+    if (info.le.phy != NULL) {
+        LOG_INF("BLE %s: PHY tx=%s rx=%s",
+                tag,
+                ble_phy_str(info.le.phy->tx_phy),
+                ble_phy_str(info.le.phy->rx_phy));
+    } else {
+        LOG_INF("BLE %s: PHY info unavailable", tag);
+    }
+#endif
+
+#if defined(CONFIG_BT_USER_DATA_LEN_UPDATE)
+    if (info.le.data_len != NULL) {
+        LOG_INF("BLE %s: data_len tx_len=%u tx_time=%u rx_len=%u rx_time=%u",
+                tag,
+                (unsigned)info.le.data_len->tx_max_len,
+                (unsigned)info.le.data_len->tx_max_time,
+                (unsigned)info.le.data_len->rx_max_len,
+                (unsigned)info.le.data_len->rx_max_time);
+    } else {
+        LOG_INF("BLE %s: data_len info unavailable", tag);
+    }
+#endif
+
+    uint16_t mtu = bt_gatt_get_mtu(conn);
+    LOG_INF("BLE %s: att_mtu=%u", tag, (unsigned)mtu);
+}
+
 static void mtu_exchange_cb(struct bt_conn *conn, uint8_t err,
                             struct bt_gatt_exchange_params *params)
 {
@@ -210,6 +269,22 @@ static void ble_le_param_updated(struct bt_conn *conn, uint16_t interval,
             }
         }
     }
+
+    ble_log_link_info(conn, "param_updated");
+}
+
+static void ble_le_phy_updated(struct bt_conn *conn,
+                               struct bt_conn_le_phy_info *param)
+{
+    ARG_UNUSED(param);
+    ble_log_link_info(conn, "phy_updated");
+}
+
+static void ble_le_data_len_updated(struct bt_conn *conn,
+                                    struct bt_conn_le_data_len_info *info)
+{
+    ARG_UNUSED(info);
+    ble_log_link_info(conn, "data_len_updated");
 }
 
 static void ble_connected(struct bt_conn *conn, uint8_t err)
@@ -224,16 +299,7 @@ static void ble_connected(struct bt_conn *conn, uint8_t err)
     g_att_mtu = 23;
     g_last_param_req_ms = 0;
     LOG_INF("BLE connected");
-
-    struct bt_conn_info info;
-    if (bt_conn_get_info(conn, &info) == 0) {
-        if (info.type == BT_CONN_TYPE_LE) {
-            LOG_INF("BLE conn info: interval=%u latency=%u timeout=%u",
-                    (unsigned)info.le.interval,
-                    (unsigned)info.le.latency,
-                    (unsigned)info.le.timeout);
-        }
-    }
+    ble_log_link_info(conn, "connected");
 
     if (IS_ENABLED(CONFIG_BLE_FORCE_SECURITY)) {
         int sec_ret = bt_conn_set_security(conn, BT_SECURITY_L2);
@@ -286,6 +352,8 @@ static struct bt_conn_cb g_conn_cb = {
     .connected = ble_connected,
     .disconnected = ble_disconnected,
     .le_param_updated = ble_le_param_updated,
+    .le_phy_updated = ble_le_phy_updated,
+    .le_data_len_updated = ble_le_data_len_updated,
 };
 
 static int ble_nrf_init(void)
