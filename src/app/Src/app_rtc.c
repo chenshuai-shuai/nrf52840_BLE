@@ -16,7 +16,7 @@
 #include "rt_thread.h"
 #include "app_uplink_service.h"
 
-LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_WRN);
+LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_INF);
 
 #ifndef AUDIO_PKT_MAGIC0
 #define AUDIO_PKT_MAGIC0 0xA5
@@ -251,6 +251,22 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
     ARG_UNUSED(p3);
 
     size_t stream_len = 0;
+    uint32_t rx_pkts = 0;
+    uint32_t rx_audio_pkts = 0;
+    uint32_t rx_ctrl_pkts = 0;
+    uint32_t rx_bad_hdr = 0;
+    uint32_t rx_drop_buf = 0;
+    uint32_t rx_overflow = 0;
+    uint32_t rx_empty_payload = 0;
+    uint16_t last_seq = 0;
+    bool last_seq_valid = false;
+    uint16_t asm_seq = 0;
+    bool asm_valid = false;
+    uint8_t asm_frag_cnt = 0;
+    uint8_t asm_frag_seen = 0;
+    uint32_t asm_frag_mask = 0;
+    size_t asm_len = 0;
+    uint8_t asm_buf[SPK_FRAME_BYTES * 2]; /* enough for one 20ms frame (640B) */
     int64_t last_log = 0;
     int64_t last_audio_ms = 0;
 
@@ -272,19 +288,23 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
         }
         const uint8_t *pkt = dl_rec.data;
         int pkt_len = (int)dl_rec.len;
+        rx_pkts++;
 
         if (pkt_len <= 0 || pkt == NULL) {
             continue;
         }
         if (handle_ctrl_msg(pkt, pkt_len)) {
+            rx_ctrl_pkts++;
             continue;
         }
         if (pkt_len < (int)sizeof(struct audio_pkt_hdr)) {
+            rx_bad_hdr++;
             continue;
         }
 
         struct audio_pkt_hdr *hdr = (struct audio_pkt_hdr *)pkt;
         if (hdr->magic0 != AUDIO_PKT_MAGIC0 || hdr->magic1 != AUDIO_PKT_MAGIC1) {
+            rx_bad_hdr++;
             continue;
         }
         if (!g_spk_accept_audio) {
@@ -307,36 +327,74 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
             continue;
         }
         if (payload_len == 0) {
+            rx_empty_payload++;
             continue;
         }
 
-        if (payload_len > sizeof(g_spk_stream_buf)) {
-            stream_len = 0;
-            continue;
+        rx_audio_pkts++;
+        if (!last_seq_valid) {
+            last_seq = hdr->seq;
+            last_seq_valid = true;
+        } else if ((uint16_t)(last_seq + 1U) != hdr->seq && hdr->frag_idx == 0) {
+            LOG_WRN("SPK RX seq gap: last=%u curr=%u", (unsigned)last_seq, (unsigned)hdr->seq);
+            last_seq = hdr->seq;
+        } else if (hdr->frag_idx == 0) {
+            last_seq = hdr->seq;
         }
-        if (stream_len + payload_len > sizeof(g_spk_stream_buf)) {
-            stream_len = 0;
-        }
-        size_t space = sizeof(g_spk_test_buf) - g_spk_test_len;
-        if (space > 0) {
-            size_t take = (payload_len <= space) ? payload_len : space;
-            memcpy(g_spk_test_buf + g_spk_test_len,
-                   pkt + sizeof(struct audio_pkt_hdr),
-                   take);
-            g_spk_test_len += take;
-            if (take < payload_len) {
-                g_spk_test_overflow++;
+
+        /* Reassemble fragments per seq; append only when full frame assembled. */
+        if (hdr->frag_cnt > 0 && hdr->frag_cnt <= 30) {
+            if (!asm_valid || asm_seq != hdr->seq) {
+                /* New sequence: reset assembly state. */
+                asm_valid = true;
+                asm_seq = hdr->seq;
+                asm_frag_cnt = hdr->frag_cnt;
+                asm_frag_seen = 0;
+                asm_frag_mask = 0;
+                asm_len = 0;
             }
-        } else {
-            g_spk_test_overflow++;
+            if (hdr->frag_cnt != asm_frag_cnt) {
+                /* Mismatch, drop current assembly. */
+                asm_valid = false;
+            } else if (hdr->frag_idx < 30U) {
+                uint32_t bit = (1U << hdr->frag_idx);
+                if ((asm_frag_mask & bit) == 0U) {
+                    size_t off = (size_t)hdr->frag_idx * payload_len;
+                    if (off + payload_len <= sizeof(asm_buf)) {
+                        memcpy(asm_buf + off, pkt + sizeof(struct audio_pkt_hdr), payload_len);
+                        asm_frag_mask |= bit;
+                        asm_frag_seen++;
+                        if (off + payload_len > asm_len) {
+                            asm_len = off + payload_len;
+                        }
+                    }
+                }
+            }
+            if (asm_valid && asm_frag_seen == asm_frag_cnt) {
+                size_t space = sizeof(g_spk_test_buf) - g_spk_test_len;
+                if (space >= asm_len) {
+                    memcpy(g_spk_test_buf + g_spk_test_len, asm_buf, asm_len);
+                    g_spk_test_len += asm_len;
+                } else {
+                    g_spk_test_overflow++;
+                    rx_drop_buf++;
+                }
+                asm_valid = false;
+            }
         }
         int64_t now = k_uptime_get();
         last_audio_ms = now;
         if (now - last_log >= 1000) {
             last_log = now;
-            LOG_INF("SPK RX bytes=%u overflow=%u",
+            LOG_INF("SPK RX bytes=%u overflow=%u pkts=%u audio=%u ctrl=%u bad=%u drop=%u empty=%u",
                     (unsigned)g_spk_test_len,
-                    (unsigned)g_spk_test_overflow);
+                    (unsigned)g_spk_test_overflow,
+                    (unsigned)rx_pkts,
+                    (unsigned)rx_audio_pkts,
+                    (unsigned)rx_ctrl_pkts,
+                    (unsigned)rx_bad_hdr,
+                    (unsigned)rx_drop_buf,
+                    (unsigned)rx_empty_payload);
         }
     }
 }

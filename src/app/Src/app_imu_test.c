@@ -8,7 +8,7 @@
 #include "imu_algo.h"
 #include "app_uplink_service.h"
 
-LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_WRN);
+LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
 
 #define IMU_TEST_STACK_SIZE 2048
 #define IMU_TEST_PRIORITY   8
@@ -77,6 +77,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
     uint32_t rate_cnt = 0;
     uint32_t action_cnt = 0;
     int64_t last_action_log_ms = 0;
+    int64_t last_raw_log_ms = 0;
 
     while (1) {
         imu_sample_t s = {0};
@@ -222,6 +223,48 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
                                          &imu_pkt,
                                          sizeof(imu_pkt),
                                          imu_pkt.ts_ms);
+            }
+
+            if ((sample_cnt % IMU_UPLINK_EVERY_N) == 0U &&
+                app_uplink_service_is_ready()) {
+                struct __packed {
+                    uint8_t ver;
+                    uint8_t type;
+                    uint16_t seq;
+                    int16_t ax;
+                    int16_t ay;
+                    int16_t az;
+                    int16_t gx;
+                    int16_t gy;
+                    int16_t gz;
+                    int16_t temp;
+                    uint32_t ts_ms;
+                } imu_raw_pkt = {
+                    .ver = 1,
+                    .type = 3, /* raw 6-axis + temp */
+                    .seq = (uint16_t)(sample_cnt & 0xFFFFU),
+                    .ax = s.accel_x,
+                    .ay = s.accel_y,
+                    .az = s.accel_z,
+                    .gx = s.gyro_x,
+                    .gy = s.gyro_y,
+                    .gz = s.gyro_z,
+                    .temp = s.temp,
+                    .ts_ms = (uint32_t)act_now,
+                };
+                (void)app_uplink_publish(APP_DATA_PART_IMU,
+                                         APP_UPLINK_PRIO_LOW,
+                                         &imu_raw_pkt,
+                                         sizeof(imu_raw_pkt),
+                                         imu_raw_pkt.ts_ms);
+                if ((act_now - last_raw_log_ms) >= 1000) {
+                    last_raw_log_ms = act_now;
+                    LOG_INF("imu_raw uplink: seq=%u ax=%d ay=%d az=%d gx=%d gy=%d gz=%d temp=%d",
+                            (unsigned)imu_raw_pkt.seq,
+                            imu_raw_pkt.ax, imu_raw_pkt.ay, imu_raw_pkt.az,
+                            imu_raw_pkt.gx, imu_raw_pkt.gy, imu_raw_pkt.gz,
+                            imu_raw_pkt.temp);
+                }
             }
         }
         k_yield();
