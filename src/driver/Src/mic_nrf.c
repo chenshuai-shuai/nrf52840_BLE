@@ -69,7 +69,7 @@ static int mic_nrf_init(void)
     g_mic.dmic_cfg.channel.req_num_streams = 1U;
     g_mic.dmic_cfg.channel.req_num_chan = 1U;
     g_mic.dmic_cfg.channel.req_chan_map_lo =
-        dmic_build_channel_map(0U, 0U, PDM_CHAN_RIGHT);
+        dmic_build_channel_map(0U, 0U, PDM_CHAN_LEFT);
     g_mic.dmic_cfg.channel.req_chan_map_hi = 0U;
 
     (void)dmic_trigger(g_mic.dev, DMIC_TRIGGER_STOP);

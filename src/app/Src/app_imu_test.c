@@ -8,7 +8,7 @@
 #include "imu_algo.h"
 #include "app_uplink_service.h"
 
-LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
+LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_WRN);
 
 #define IMU_TEST_STACK_SIZE 2048
 #define IMU_TEST_PRIORITY   8

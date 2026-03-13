@@ -707,10 +707,11 @@ static void mic_level_entry(void *p1, void *p2, void *p3)
 
     LOG_INF("MIC level test started");
 
-    uint64_t last_log = k_uptime_get();
     uint32_t frames = 0;
-    int16_t peak = 0;
-    uint64_t sum_sq = 0;
+    int32_t peak_l = 0;
+    int32_t peak_r = 0;
+    uint64_t sum_sq_l = 0;
+    uint64_t sum_sq_r = 0;
     uint32_t sample_cnt = 0;
 
     while (1) {
@@ -720,29 +721,40 @@ static void mic_level_entry(void *p1, void *p2, void *p3)
         if (r == HAL_OK && buf != NULL && len > 0) {
             int16_t *pcm = (int16_t *)buf;
             size_t samples = len / sizeof(int16_t);
-            for (size_t i = 0; i < samples; i++) {
-                int32_t v = pcm[i];
-                int32_t av = v < 0 ? -v : v;
-                if (av > peak) {
-                    peak = (int16_t)av;
+            for (size_t i = 0; i + 1 < samples; i += 2) {
+                int32_t l = pcm[i];
+                int32_t r = pcm[i + 1];
+                int32_t al = l < 0 ? -l : l;
+                int32_t ar = r < 0 ? -r : r;
+                if (al > peak_l) {
+                    peak_l = al;
                 }
-                sum_sq += (uint64_t)(v * (int64_t)v);
+                if (ar > peak_r) {
+                    peak_r = ar;
+                }
+                sum_sq_l += (uint64_t)(l * (int64_t)l);
+                sum_sq_r += (uint64_t)(r * (int64_t)r);
             }
-            sample_cnt += (uint32_t)samples;
+            sample_cnt += (uint32_t)(samples / 2U);
             frames++;
             (void)hal_mic_release(buf);
         }
 
         uint64_t now = k_uptime_get();
         if (now - last_log >= 1000) {
-            uint32_t rms = 0;
+            uint32_t rms_l = 0;
+            uint32_t rms_r = 0;
             if (sample_cnt > 0) {
-                rms = (uint32_t)(sum_sq / sample_cnt);
+                rms_l = (uint32_t)(sum_sq_l / sample_cnt);
+                rms_r = (uint32_t)(sum_sq_r / sample_cnt);
             }
-            LOG_INF("MIC level: frames=%u peak=%d rms=%u", frames, peak, rms);
+            LOG_INF("MIC level: frames=%u L_peak=%d L_rms=%u | R_peak=%d R_rms=%u",
+                    frames, (int)peak_l, rms_l, (int)peak_r, rms_r);
             last_log = now;
-            peak = 0;
-            sum_sq = 0;
+            peak_l = 0;
+            peak_r = 0;
+            sum_sq_l = 0;
+            sum_sq_r = 0;
             sample_cnt = 0;
             frames = 0;
         }
@@ -1022,6 +1034,9 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
     uint32_t pkts_sent = 0;
     uint32_t pcm_bytes_sent = 0;
     uint32_t wire_bytes_sent = 0;
+    int32_t peak = 0;
+    uint64_t sum_sq = 0;
+    uint32_t sample_cnt = 0;
 
     while (1) {
         struct mic_frame_msg msg;
@@ -1057,6 +1072,20 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
             }
         }
 
+        {
+            const int16_t *pcm = (const int16_t *)msg.buf;
+            size_t samples = msg.len / sizeof(int16_t);
+            for (size_t i = 0; i < samples; i++) {
+                int32_t v = pcm[i];
+                int32_t av = v < 0 ? -v : v;
+                if (av > peak) {
+                    peak = av;
+                }
+                sum_sq += (uint64_t)(v * (int64_t)v);
+            }
+            sample_cnt += (uint32_t)samples;
+        }
+
         int ret = audio_send_frame((const uint8_t *)msg.buf, msg.len, msg.seq);
         if (ret == HAL_OK) {
             frames_sent++;
@@ -1080,6 +1109,10 @@ log_stats:
         {
             uint64_t now = k_uptime_get();
             if (now - last_log >= 5000) {
+                uint32_t rms = 0;
+                if (sample_cnt > 0) {
+                    rms = (uint32_t)(sum_sq / sample_cnt);
+                }
 #if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
                 LOG_INF("MIC stream: frames=%u sent=%u drop=%u nrdy=%u send=%u pkts=%u pcm=%u wire=%u ready=%d max_tx=%u",
                         frames, frames_sent, frames_drop, drop_not_ready, drop_send_fail,
@@ -1087,7 +1120,11 @@ log_stats:
                         app_uplink_service_is_ready(),
                         (unsigned)app_uplink_max_payload());
 #endif
+                LOG_INF("MIC_UP: peak=%d rms=%u samples=%u", (int)peak, rms, (unsigned)sample_cnt);
                 last_log = now;
+                peak = 0;
+                sum_sq = 0;
+                sample_cnt = 0;
             }
         }
     }
