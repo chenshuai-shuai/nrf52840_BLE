@@ -28,6 +28,12 @@ LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_INF);
 #define AUDIO_CODEC_HDR_LEN 8
 #endif
 
+/* Uplink audio DSP (lightweight) */
+#define MIC_DSP_PRE_GAIN      1.0f
+#define MIC_DSP_DC_R          0.995f
+#define MIC_DSP_GATE_TH       0.0f
+#define MIC_DSP_LIMIT         30000.0f
+
 #ifndef DOWNLINK_TEST
 #define DOWNLINK_TEST 0
 #endif
@@ -102,47 +108,44 @@ static uint8_t ima_adpcm_encode_nibble(int16_t sample, int16_t *pred, uint8_t *i
     return (uint8_t)(nibble & 0x0F);
 }
 
-static size_t audio_encode_ima_adpcm_8k(const int16_t *pcm16,
-                                        size_t pcm_samples,
-                                        uint8_t *out,
-                                        size_t out_cap)
+static size_t audio_encode_ima_adpcm_16k(const int16_t *pcm16,
+                                         size_t pcm_samples,
+                                         uint8_t *out,
+                                         size_t out_cap)
 {
     if (pcm16 == NULL || out == NULL || pcm_samples < 2U || out_cap < (AUDIO_CODEC_HDR_LEN + 1U)) {
         return 0U;
     }
 
-    static int16_t s_ds[320];
-    size_t ds_n = 0U;
-    for (size_t i = 0; i < pcm_samples && ds_n < ARRAY_SIZE(s_ds); i += 2U) {
-        s_ds[ds_n++] = pcm16[i];
-    }
-    if (ds_n < 2U || ds_n > 255U) {
+    if (pcm_samples < 2U || pcm_samples > 255U) {
         return 0U;
     }
 
-    size_t nibble_cnt = ds_n - 1U;
+    size_t nibble_cnt = pcm_samples - 1U;
     size_t data_bytes = (nibble_cnt + 1U) / 2U;
     size_t total = AUDIO_CODEC_HDR_LEN + data_bytes;
     if (total > out_cap) {
         return 0U;
     }
 
-    int16_t pred = s_ds[0];
+    int16_t pred = pcm16[0];
     uint8_t idx = 0U;
 
     out[0] = AUDIO_CODEC_IMA_ADPCM_8K;
-    out[1] = 8U;   /* sample rate kHz */
+    out[1] = 16U;  /* sample rate kHz */
     out[2] = 1U;   /* mono */
     out[3] = 4U;   /* bits per sample */
     sys_put_le16((uint16_t)pred, &out[4]);
     out[6] = idx;
-    out[7] = (uint8_t)ds_n;
+    out[7] = (uint8_t)pcm_samples;
 
     size_t out_i = AUDIO_CODEC_HDR_LEN;
     bool low = true;
     uint8_t packed = 0U;
-    for (size_t i = 1U; i < ds_n; i++) {
-        uint8_t n = ima_adpcm_encode_nibble(s_ds[i], &pred, &idx);
+    int16_t prev = pcm16[0];
+    for (size_t i = 1U; i < pcm_samples; i++) {
+        prev = pcm16[i];
+        uint8_t n = ima_adpcm_encode_nibble(prev, &pred, &idx);
         if (low) {
             packed = n;
             low = false;
@@ -159,6 +162,42 @@ static size_t audio_encode_ima_adpcm_8k(const int16_t *pcm16,
 
     out[6] = idx;
     return out_i;
+}
+
+static void mic_dsp_process(int16_t *pcm, size_t samples)
+{
+    /* Simple DC blocker + gain + noise gate + soft limiter */
+    static float dc_x1 = 0.0f;
+    static float dc_y1 = 0.0f;
+
+    for (size_t i = 0; i < samples; i++) {
+        float x = (float)pcm[i];
+        float y = x - dc_x1 + MIC_DSP_DC_R * dc_y1;
+        dc_x1 = x;
+        dc_y1 = y;
+
+        y *= MIC_DSP_PRE_GAIN;
+
+        if (MIC_DSP_GATE_TH > 0.0f) {
+            float ay = y >= 0.0f ? y : -y;
+            if (ay < MIC_DSP_GATE_TH) {
+                float t = ay / MIC_DSP_GATE_TH;
+                float gain = t * t;
+                y *= gain;
+            }
+        }
+
+        if (y > MIC_DSP_LIMIT) {
+            y = MIC_DSP_LIMIT + (y - MIC_DSP_LIMIT) * 0.5f;
+        } else if (y < -MIC_DSP_LIMIT) {
+            y = -MIC_DSP_LIMIT + (y + MIC_DSP_LIMIT) * 0.5f;
+        }
+
+        if (y > 32767.0f) y = 32767.0f;
+        if (y < -32768.0f) y = -32768.0f;
+
+        pcm[i] = (int16_t)y;
+    }
 }
 
 #ifdef CONFIG_SPK_STREAM
@@ -879,14 +918,13 @@ static int audio_send_frame(const uint8_t *pcm, size_t len, uint16_t seq)
     if (pcm == NULL || len == 0) {
         return HAL_EINVAL;
     }
-
     uint8_t frame_payload[sizeof(struct audio_pkt_hdr) + AUDIO_PAYLOAD_MAX];
     size_t payload_len = 0U;
     if (len >= sizeof(int16_t) * 2U) {
-        payload_len = audio_encode_ima_adpcm_8k((const int16_t *)pcm,
-                                                len / sizeof(int16_t),
-                                                frame_payload,
-                                                sizeof(frame_payload));
+        payload_len = audio_encode_ima_adpcm_16k((const int16_t *)pcm,
+                                                 len / sizeof(int16_t),
+                                                 frame_payload,
+                                                 sizeof(frame_payload));
     }
     if (payload_len == 0U) {
         if ((len + 1U) > sizeof(frame_payload)) {
@@ -1086,6 +1124,7 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
             sample_cnt += (uint32_t)samples;
         }
 
+        mic_dsp_process((int16_t *)msg.buf, msg.len / sizeof(int16_t));
         int ret = audio_send_frame((const uint8_t *)msg.buf, msg.len, msg.seq);
         if (ret == HAL_OK) {
             frames_sent++;
