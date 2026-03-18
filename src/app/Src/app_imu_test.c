@@ -26,6 +26,8 @@ LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_WRN);
 
 static struct k_thread g_imu_thread;
 RT_THREAD_STACK_DEFINE(g_imu_stack, IMU_TEST_STACK_SIZE);
+static bool g_imu_started;
+static bool g_imu_paused;
 
 static void imu_test_entry(void *p1, void *p2, void *p3)
 {
@@ -273,8 +275,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
 
 void app_imu_test_start(void)
 {
-    static bool started;
-    if (started) {
+    if (g_imu_started) {
         return;
     }
 
@@ -290,5 +291,23 @@ void app_imu_test_start(void)
         return;
     }
 
-    started = true;
+    g_imu_started = true;
+}
+
+void app_imu_test_pause(void)
+{
+    if (!g_imu_started || g_imu_paused) {
+        return;
+    }
+    k_thread_suspend(&g_imu_thread);
+    g_imu_paused = true;
+}
+
+void app_imu_test_resume(void)
+{
+    if (!g_imu_started || !g_imu_paused) {
+        return;
+    }
+    k_thread_resume(&g_imu_thread);
+    g_imu_paused = false;
 }

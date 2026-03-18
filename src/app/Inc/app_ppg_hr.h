@@ -9,5 +9,7 @@ typedef enum {
 } app_ppg_hr_state_t;
 
 int app_ppg_hr_start(void);
+void app_ppg_hr_pause(void);
+void app_ppg_hr_resume(void);
 app_ppg_hr_state_t app_ppg_hr_get_state(void);
 int app_ppg_hr_get_latest_sample(hal_ppg_sample_t *out);

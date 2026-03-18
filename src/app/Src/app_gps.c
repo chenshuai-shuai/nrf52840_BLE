@@ -26,6 +26,8 @@ typedef struct {
 
 static struct k_thread g_gps_thread;
 RT_THREAD_STACK_DEFINE(g_gps_stack, GPS_APP_STACK_SIZE);
+static bool g_gps_started;
+static bool g_gps_paused;
 
 static int gps_split_fields(char *line, char *fields[], int max_fields)
 {
@@ -216,8 +218,7 @@ static void gps_app_entry(void *p1, void *p2, void *p3)
 
 void app_gps_start(void)
 {
-    static bool started;
-    if (started) {
+    if (g_gps_started) {
         return;
     }
 
@@ -233,6 +234,24 @@ void app_gps_start(void)
         return;
     }
 
-    started = true;
+    g_gps_started = true;
+}
+
+void app_gps_pause(void)
+{
+    if (!g_gps_started || g_gps_paused) {
+        return;
+    }
+    k_thread_suspend(&g_gps_thread);
+    g_gps_paused = true;
+}
+
+void app_gps_resume(void)
+{
+    if (!g_gps_started || !g_gps_paused) {
+        return;
+    }
+    k_thread_resume(&g_gps_thread);
+    g_gps_paused = false;
 }
 

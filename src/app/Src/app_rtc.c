@@ -4,9 +4,13 @@
 #include <zephyr/sys/byteorder.h>
 #include <stdint.h>
 #include <string.h>
+#include <arm_math.h>
 
 #include "app_rtc.h"
 #include "app_state.h"
+#include "app_imu_test.h"
+#include "app_gps.h"
+#include "app_ppg_hr.h"
 #include "hal_audio.h"
 #include "hal_spk.h"
 #include "hal_mic.h"
@@ -204,23 +208,23 @@ static void mic_dsp_process(int16_t *pcm, size_t samples)
 #define SPK_STREAM_STACK_SIZE 4096
 #define SPK_STREAM_PRIO 4
 #define SPK_PLAY_STACK_SIZE 2048
-#define SPK_PLAY_PRIO 5
+#define SPK_PLAY_PRIO 3
 
-#define SPK_FRAME_SAMPLES 320U /* 20 ms @ 16 kHz */
+#define SPK_FRAME_SAMPLES 160U /* 10 ms @ 16 kHz */
 #define SPK_FRAME_BYTES (SPK_FRAME_SAMPLES * sizeof(int16_t))
-#define SPK_FRAME_Q_LEN 24
-#define SPK_BUF_LOW_WATER 2
-#define SPK_PREBUFFER_FRAMES 6
-#define SPK_TEST_BUF_MAX (32 * 1024)
+#define SPK_ENC_FRAME_MAX 88U
+#define SPK_RING_FRAMES 512U               /* ~51 KB for ADPCM frames */
+#define SPK_HIGH_WATER_FRAMES 300U         /* ~3.0 s */
+#define SPK_LOW_WATER_FRAMES 100U          /* ~1.0 s */
+#define SPK_STREAM_RATE_MIN_PM 1100U       /* 1.1x realtime */
+#define SPK_DSP_GAIN 0.38f                 /* ~ -8.4 dB */
+#define SPK_DSP_LIMIT 0.72f
+#define SPK_DSP_FADE_SAMPLES 80U           /* 5 ms @ 16 kHz */
 
-struct spk_frame_msg {
-    uint8_t *buf;
-    size_t len;
-    bool end;
+struct spk_enc_slot {
+    uint8_t len;
+    uint8_t data[SPK_ENC_FRAME_MAX];
 };
-
-K_MEM_SLAB_DEFINE(spk_rx_slab, SPK_FRAME_BYTES, SPK_FRAME_Q_LEN, 4);
-K_MSGQ_DEFINE(g_spk_frame_q, sizeof(struct spk_frame_msg), SPK_FRAME_Q_LEN, 4);
 
 static struct k_thread g_spk_rx_thread;
 RT_THREAD_STACK_DEFINE(g_spk_rx_stack, SPK_STREAM_STACK_SIZE);
@@ -230,15 +234,341 @@ RT_THREAD_STACK_DEFINE(g_spk_play_stack, SPK_PLAY_STACK_SIZE);
 static volatile bool g_spk_buf_full = false;
 static volatile bool g_spk_accept_audio = false;
 static volatile bool g_nrf_ready_sent = false;
+static volatile bool g_playback_critical = false;
+#if defined(CONFIG_MIC_TEST) && (DOWNLINK_TEST == 0)
+static struct k_thread g_mic_test_thread;
+static struct k_thread g_mic_upload_thread;
+#endif
+static bool g_mic_cap_started = false;
+static bool g_mic_up_started = false;
+static bool g_mic_cap_paused = false;
+static bool g_mic_up_paused = false;
+static volatile bool g_mic_pause_req = false;
 static uint32_t g_spk_play_frames = 0;
 static uint32_t g_spk_play_errs = 0;
+static struct spk_enc_slot g_spk_ring[SPK_RING_FRAMES];
+static struct k_mutex g_spk_ring_lock;
+static size_t g_spk_ring_ridx = 0U;
+static size_t g_spk_ring_widx = 0U;
+static size_t g_spk_ring_count = 0U;
+static bool g_spk_eos_received = false;
+static bool g_spk_rx_reset = false;
+static uint32_t g_spk_rx_audio_frames = 0U;
+static int64_t g_spk_rx_start_ms = 0;
+static uint8_t g_spk_asm_buf[SPK_FRAME_BYTES * 2];
+static uint8_t g_spk_asm_part_buf[AUDIO_MAX_FRAGS][AUDIO_PAYLOAD_MAX];
+static uint16_t g_spk_asm_part_len[AUDIO_MAX_FRAGS];
+static uint8_t g_spk_play_buf[SPK_FRAME_BYTES * 2];
+static arm_biquad_casd_df1_inst_f32 g_spk_hp_biquad;
+static float32_t g_spk_hp_state[4];
+static const float32_t g_spk_hp_coeffs[5] = {
+    0.9726139f,
+    -1.9452278f,
+    0.9726139f,
+    1.9444777f,
+    -0.9459779f,
+};
+static float32_t g_spk_dsp_in[SPK_FRAME_SAMPLES * 2];
+static float32_t g_spk_dsp_out[SPK_FRAME_SAMPLES * 2];
+static uint32_t g_spk_fade_in_left = 0U;
+static bool g_spk_dsp_ready = false;
 
 static void mic_drop_queue(void);
 
-static uint8_t g_spk_test_buf[SPK_TEST_BUF_MAX];
-static size_t g_spk_test_len = 0;
-static struct k_sem g_spk_test_sem;
-static uint32_t g_spk_test_overflow = 0;
+static void spk_dsp_reset(void)
+{
+    memset(g_spk_hp_state, 0, sizeof(g_spk_hp_state));
+    g_spk_fade_in_left = SPK_DSP_FADE_SAMPLES;
+}
+
+static void spk_dsp_init_once(void)
+{
+    if (!g_spk_dsp_ready) {
+        arm_biquad_cascade_df1_init_f32(&g_spk_hp_biquad, 1, (float32_t *)g_spk_hp_coeffs, g_spk_hp_state);
+        g_spk_dsp_ready = true;
+    }
+    spk_dsp_reset();
+}
+
+static void spk_dsp_process_pcm(int16_t *pcm, size_t samples, bool fade_out_tail)
+{
+    if (pcm == NULL || samples == 0U) {
+        return;
+    }
+    if (!g_spk_dsp_ready) {
+        spk_dsp_init_once();
+    }
+
+    if (samples > ARRAY_SIZE(g_spk_dsp_in)) {
+        samples = ARRAY_SIZE(g_spk_dsp_in);
+    }
+
+    for (size_t i = 0; i < samples; i++) {
+        g_spk_dsp_in[i] = (float32_t)pcm[i] / 32768.0f;
+    }
+
+    arm_biquad_cascade_df1_f32(&g_spk_hp_biquad, g_spk_dsp_in, g_spk_dsp_out, (uint32_t)samples);
+
+    size_t fade_out_samples = fade_out_tail ? MIN(samples, (size_t)SPK_DSP_FADE_SAMPLES) : 0U;
+    size_t fade_out_start = samples - fade_out_samples;
+
+    for (size_t i = 0; i < samples; i++) {
+        float32_t y = g_spk_dsp_out[i] * SPK_DSP_GAIN;
+
+        if (g_spk_fade_in_left > 0U) {
+            uint32_t done = SPK_DSP_FADE_SAMPLES - g_spk_fade_in_left;
+            float32_t fade = (float32_t)(done + 1U) / (float32_t)SPK_DSP_FADE_SAMPLES;
+            y *= fade;
+            g_spk_fade_in_left--;
+        }
+
+        if (fade_out_tail && i >= fade_out_start) {
+            size_t rem = samples - i;
+            float32_t fade = (float32_t)rem / (float32_t)(fade_out_samples + 1U);
+            y *= fade;
+        }
+
+        float32_t ay = y >= 0.0f ? y : -y;
+        if (ay > SPK_DSP_LIMIT) {
+            float32_t over = ay - SPK_DSP_LIMIT;
+            ay = SPK_DSP_LIMIT + over * 0.20f;
+            if (ay > 0.92f) {
+                ay = 0.92f;
+            }
+            y = (y >= 0.0f) ? ay : -ay;
+        }
+
+        if (y > 0.999f) {
+            y = 0.999f;
+        } else if (y < -0.999f) {
+            y = -0.999f;
+        }
+
+        pcm[i] = (int16_t)(y * 32767.0f);
+    }
+}
+
+static void spk_ring_reset(void)
+{
+    k_mutex_lock(&g_spk_ring_lock, K_FOREVER);
+    g_spk_ring_ridx = 0U;
+    g_spk_ring_widx = 0U;
+    g_spk_ring_count = 0U;
+    g_spk_eos_received = false;
+    g_spk_rx_audio_frames = 0U;
+    g_spk_rx_start_ms = 0;
+    k_mutex_unlock(&g_spk_ring_lock);
+}
+
+static bool spk_ring_push(const uint8_t *data, size_t len)
+{
+    bool ok = false;
+    if (data == NULL || len == 0U || len > SPK_ENC_FRAME_MAX) {
+        return false;
+    }
+    k_mutex_lock(&g_spk_ring_lock, K_FOREVER);
+    if (g_spk_ring_count < SPK_RING_FRAMES) {
+        struct spk_enc_slot *slot = &g_spk_ring[g_spk_ring_widx];
+        slot->len = (uint8_t)len;
+        memcpy(slot->data, data, len);
+        g_spk_ring_widx = (g_spk_ring_widx + 1U) % SPK_RING_FRAMES;
+        g_spk_ring_count++;
+        ok = true;
+    }
+    k_mutex_unlock(&g_spk_ring_lock);
+    return ok;
+}
+
+static bool spk_ring_pop(uint8_t *out, size_t out_cap, size_t *out_len)
+{
+    bool ok = false;
+    if (out == NULL || out_len == NULL) {
+        return false;
+    }
+    *out_len = 0U;
+    k_mutex_lock(&g_spk_ring_lock, K_FOREVER);
+    if (g_spk_ring_count > 0U) {
+        struct spk_enc_slot *slot = &g_spk_ring[g_spk_ring_ridx];
+        if (slot->len > 0U && slot->len <= out_cap) {
+            memcpy(out, slot->data, slot->len);
+            *out_len = slot->len;
+            g_spk_ring_ridx = (g_spk_ring_ridx + 1U) % SPK_RING_FRAMES;
+            g_spk_ring_count--;
+            ok = true;
+        }
+    }
+    k_mutex_unlock(&g_spk_ring_lock);
+    return ok;
+}
+
+static size_t spk_ring_count(void)
+{
+    size_t count;
+    k_mutex_lock(&g_spk_ring_lock, K_FOREVER);
+    count = g_spk_ring_count;
+    k_mutex_unlock(&g_spk_ring_lock);
+    return count;
+}
+
+static void spk_mark_eos(void)
+{
+    k_mutex_lock(&g_spk_ring_lock, K_FOREVER);
+    g_spk_eos_received = true;
+    k_mutex_unlock(&g_spk_ring_lock);
+}
+
+static bool spk_is_eos_received(void)
+{
+    bool eos;
+    k_mutex_lock(&g_spk_ring_lock, K_FOREVER);
+    eos = g_spk_eos_received;
+    k_mutex_unlock(&g_spk_ring_lock);
+    return eos;
+}
+
+static uint32_t spk_rx_rate_permille(void)
+{
+    uint32_t rate = 0U;
+    k_mutex_lock(&g_spk_ring_lock, K_FOREVER);
+    int64_t now = k_uptime_get();
+    int64_t elapsed = now - g_spk_rx_start_ms;
+    if (g_spk_rx_start_ms > 0 && elapsed > 0) {
+        rate = (uint32_t)((g_spk_rx_audio_frames * 10000ULL) / (uint64_t)elapsed);
+    }
+    k_mutex_unlock(&g_spk_ring_lock);
+    return rate;
+}
+
+void app_rtc_playback_critical_enter(void)
+{
+    if (g_playback_critical) {
+        return;
+    }
+    g_playback_critical = true;
+
+    g_mic_pause_req = true;
+    mic_drop_queue();
+    (void)hal_mic_stop();
+
+    if (IS_ENABLED(CONFIG_IMU_TEST)) {
+        app_imu_test_pause();
+    }
+    if (IS_ENABLED(CONFIG_GPS_TEST)) {
+        app_gps_pause();
+    }
+    if (IS_ENABLED(CONFIG_PPG_SPI_PROBE)) {
+        app_ppg_hr_pause();
+    }
+}
+
+void app_rtc_playback_critical_exit(void)
+{
+    if (!g_playback_critical) {
+        return;
+    }
+
+    if (IS_ENABLED(CONFIG_PPG_SPI_PROBE)) {
+        app_ppg_hr_resume();
+    }
+    if (IS_ENABLED(CONFIG_GPS_TEST)) {
+        app_gps_resume();
+    }
+    if (IS_ENABLED(CONFIG_IMU_TEST)) {
+        app_imu_test_resume();
+    }
+
+    g_mic_pause_req = false;
+
+    g_playback_critical = false;
+}
+
+static int16_t ima_adpcm_decode_nibble(uint8_t nibble, int16_t *pred, uint8_t *index)
+{
+    int step = g_ima_step_table[*index];
+    int diff = step >> 3;
+
+    if (nibble & 0x04) {
+        diff += step;
+    }
+    if (nibble & 0x02) {
+        diff += step >> 1;
+    }
+    if (nibble & 0x01) {
+        diff += step >> 2;
+    }
+
+    if (nibble & 0x08) {
+        *pred = (int16_t)MAX((int)(*pred) - diff, -32768);
+    } else {
+        *pred = (int16_t)MIN((int)(*pred) + diff, 32767);
+    }
+
+    int idx = (int)(*index) + g_ima_index_table[nibble & 0x0F];
+    if (idx < 0) {
+        idx = 0;
+    } else if (idx > 88) {
+        idx = 88;
+    }
+    *index = (uint8_t)idx;
+    return *pred;
+}
+
+static int audio_decode_frame_to_pcm16(const uint8_t *in,
+                                       size_t in_len,
+                                       int16_t *out,
+                                       size_t out_cap_samples,
+                                       size_t *out_samples)
+{
+    if (in == NULL || out == NULL || out_samples == NULL || in_len == 0U || out_cap_samples == 0U) {
+        return HAL_EINVAL;
+    }
+
+    uint8_t codec = in[0];
+    if (codec == AUDIO_CODEC_PCM16_LE) {
+        size_t pcm_bytes = in_len - 1U;
+        size_t samples = pcm_bytes / sizeof(int16_t);
+        if ((pcm_bytes % sizeof(int16_t)) != 0U || samples > out_cap_samples) {
+            return HAL_EINVAL;
+        }
+        memcpy(out, &in[1], samples * sizeof(int16_t));
+        *out_samples = samples;
+        return HAL_OK;
+    }
+
+    if (codec != AUDIO_CODEC_IMA_ADPCM_8K || in_len < (AUDIO_CODEC_HDR_LEN + 1U)) {
+        return HAL_EINVAL;
+    }
+
+    uint8_t sample_count = in[7];
+    if (sample_count < 2U || sample_count > out_cap_samples) {
+        return HAL_EINVAL;
+    }
+
+    size_t nibble_cnt = sample_count - 1U;
+    size_t need_bytes = (nibble_cnt + 1U) / 2U;
+    if (in_len < (AUDIO_CODEC_HDR_LEN + need_bytes)) {
+        return HAL_EINVAL;
+    }
+
+    int16_t pred = (int16_t)sys_get_le16(&in[4]);
+    uint8_t idx = in[6];
+    if (idx > 88U) {
+        idx = 88U;
+    }
+
+    out[0] = pred;
+    size_t out_i = 1U;
+    for (size_t i = 0U; i < need_bytes && out_i < sample_count; i++) {
+        uint8_t packed = in[AUDIO_CODEC_HDR_LEN + i];
+        out[out_i++] = ima_adpcm_decode_nibble((uint8_t)(packed & 0x0F), &pred, &idx);
+        if (out_i < sample_count) {
+            out[out_i++] = ima_adpcm_decode_nibble((uint8_t)((packed >> 4) & 0x0F), &pred, &idx);
+        }
+    }
+
+    *out_samples = out_i;
+    return HAL_OK;
+}
 
 static bool handle_ctrl_msg(const uint8_t *buf, int len)
 {
@@ -247,11 +577,11 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
     }
     if (len >= 14 && memcmp(buf, "APP_PLAY_START", 14) == 0) {
         LOG_INF("CTRL APP_PLAY_START");
+        app_rtc_playback_critical_enter();
         g_spk_accept_audio = true;
+        g_spk_buf_full = false;
         app_state_set(AUDIO_MODE_PLAY);
         g_nrf_ready_sent = false;
-        g_spk_test_len = 0;
-        g_spk_test_overflow = 0;
         mic_drop_queue();
         return true;
     }
@@ -259,6 +589,9 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
         LOG_INF("CTRL APP_READY?");
         g_spk_accept_audio = false;
         g_nrf_ready_sent = false;
+        g_spk_buf_full = false;
+        g_spk_rx_reset = true;
+        spk_ring_reset();
         mic_drop_queue();
         if (app_uplink_service_is_ready()) {
             const char ready[] = "NRF_READY";
@@ -275,7 +608,7 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
     if (len >= 12 && memcmp(buf, "APP_PLAY_END", 12) == 0) {
         LOG_INF("CTRL APP_PLAY_END");
         g_spk_accept_audio = false;
-        app_state_set(AUDIO_MODE_UPLOAD);
+        spk_mark_eos();
         return true;
     }
     return false;
@@ -289,12 +622,12 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
 
-    size_t stream_len = 0;
     uint32_t rx_pkts = 0;
     uint32_t rx_audio_pkts = 0;
     uint32_t rx_ctrl_pkts = 0;
     uint32_t rx_bad_hdr = 0;
     uint32_t rx_drop_buf = 0;
+    uint32_t rx_decode_err = 0;
     uint32_t rx_overflow = 0;
     uint32_t rx_empty_payload = 0;
     uint16_t last_seq = 0;
@@ -304,8 +637,7 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
     uint8_t asm_frag_cnt = 0;
     uint8_t asm_frag_seen = 0;
     uint32_t asm_frag_mask = 0;
-    size_t asm_len = 0;
-    uint8_t asm_buf[SPK_FRAME_BYTES * 2]; /* enough for one 20ms frame (640B) */
+    size_t asm_len = 0U;
     int64_t last_log = 0;
     int64_t last_audio_ms = 0;
 
@@ -313,16 +645,6 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
         app_data_record_t dl_rec;
         int r = app_uplink_take_downlink(&dl_rec, 1000);
         if (r != HAL_OK) {
-            if (g_spk_accept_audio && g_spk_test_len > 0) {
-                int64_t now = k_uptime_get();
-                if (last_audio_ms != 0 && (now - last_audio_ms) > 600) {
-                    LOG_INF("SPK RX idle end, bytes=%u overflow=%u",
-                            (unsigned)g_spk_test_len,
-                            (unsigned)g_spk_test_overflow);
-                    last_audio_ms = 0;
-                    k_sem_give(&g_spk_test_sem);
-                }
-            }
             continue;
         }
         const uint8_t *pkt = dl_rec.data;
@@ -333,6 +655,15 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
             continue;
         }
         if (handle_ctrl_msg(pkt, pkt_len)) {
+            if (g_spk_rx_reset) {
+                last_seq_valid = false;
+                asm_valid = false;
+                asm_frag_cnt = 0U;
+                asm_frag_seen = 0U;
+                asm_frag_mask = 0U;
+                asm_len = 0U;
+                g_spk_rx_reset = false;
+            }
             rx_ctrl_pkts++;
             continue;
         }
@@ -346,10 +677,6 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
             rx_bad_hdr++;
             continue;
         }
-        if (!g_spk_accept_audio) {
-            continue;
-        }
-
         uint16_t payload_len = sys_get_le16((uint8_t *)&hdr->payload_len);
         uint16_t avail = (uint16_t)(pkt_len - sizeof(struct audio_pkt_hdr));
         if (payload_len > avail) {
@@ -357,12 +684,11 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
         }
 
         if (hdr->frag_cnt == 0 && payload_len == 0) {
-            LOG_INF("SPK RX end, bytes=%u overflow=%u",
-                    (unsigned)g_spk_test_len,
-                    (unsigned)g_spk_test_overflow);
-            stream_len = 0;
+            spk_mark_eos();
             last_audio_ms = 0;
-            k_sem_give(&g_spk_test_sem);
+            continue;
+        }
+        if (!g_spk_accept_audio) {
             continue;
         }
         if (payload_len == 0) {
@@ -390,7 +716,8 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
                 asm_frag_cnt = hdr->frag_cnt;
                 asm_frag_seen = 0;
                 asm_frag_mask = 0;
-                asm_len = 0;
+                asm_len = 0U;
+                memset(g_spk_asm_part_len, 0, sizeof(g_spk_asm_part_len));
             }
             if (hdr->frag_cnt != asm_frag_cnt) {
                 /* Mismatch, drop current assembly. */
@@ -398,25 +725,57 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
             } else if (hdr->frag_idx < 30U) {
                 uint32_t bit = (1U << hdr->frag_idx);
                 if ((asm_frag_mask & bit) == 0U) {
-                    size_t off = (size_t)hdr->frag_idx * payload_len;
-                    if (off + payload_len <= sizeof(asm_buf)) {
-                        memcpy(asm_buf + off, pkt + sizeof(struct audio_pkt_hdr), payload_len);
+                    if (payload_len <= AUDIO_PAYLOAD_MAX) {
+                        memcpy(g_spk_asm_part_buf[hdr->frag_idx], pkt + sizeof(struct audio_pkt_hdr), payload_len);
+                        g_spk_asm_part_len[hdr->frag_idx] = payload_len;
                         asm_frag_mask |= bit;
                         asm_frag_seen++;
-                        if (off + payload_len > asm_len) {
-                            asm_len = off + payload_len;
-                        }
                     }
                 }
             }
             if (asm_valid && asm_frag_seen == asm_frag_cnt) {
-                size_t space = sizeof(g_spk_test_buf) - g_spk_test_len;
-                if (space >= asm_len) {
-                    memcpy(g_spk_test_buf + g_spk_test_len, asm_buf, asm_len);
-                    g_spk_test_len += asm_len;
-                } else {
-                    g_spk_test_overflow++;
+                asm_len = 0U;
+                for (uint8_t i = 0U; i < asm_frag_cnt; i++) {
+                    if ((asm_len + g_spk_asm_part_len[i]) > sizeof(g_spk_asm_buf)) {
+                        asm_valid = false;
+                        break;
+                    }
+                    memcpy(g_spk_asm_buf + asm_len, g_spk_asm_part_buf[i], g_spk_asm_part_len[i]);
+                    asm_len += g_spk_asm_part_len[i];
+                }
+            }
+            if (asm_valid && asm_frag_seen == asm_frag_cnt) {
+                if (asm_len == 0U || asm_len > SPK_ENC_FRAME_MAX) {
+                    rx_decode_err++;
+                } else if (!spk_ring_push(g_spk_asm_buf, asm_len)) {
                     rx_drop_buf++;
+                    g_spk_buf_full = true;
+                    if (app_uplink_service_is_ready()) {
+                        const char full[] = "BUF_FULL";
+                        (void)app_uplink_publish(APP_DATA_PART_CTRL,
+                                                 APP_UPLINK_PRIO_HIGH,
+                                                 full,
+                                                 sizeof(full) - 1,
+                                                 (uint32_t)k_uptime_get());
+                    }
+                } else {
+                    k_mutex_lock(&g_spk_ring_lock, K_FOREVER);
+                    if (g_spk_rx_start_ms == 0) {
+                        g_spk_rx_start_ms = k_uptime_get();
+                    }
+                    g_spk_rx_audio_frames++;
+                    size_t used = g_spk_ring_count;
+                    if (!g_spk_buf_full && used >= (SPK_RING_FRAMES - 8U) &&
+                        app_uplink_service_is_ready()) {
+                        const char full[] = "BUF_FULL";
+                        (void)app_uplink_publish(APP_DATA_PART_CTRL,
+                                                 APP_UPLINK_PRIO_HIGH,
+                                                 full,
+                                                 sizeof(full) - 1,
+                                                 (uint32_t)k_uptime_get());
+                        g_spk_buf_full = true;
+                    }
+                    k_mutex_unlock(&g_spk_ring_lock);
                 }
                 asm_valid = false;
             }
@@ -425,15 +784,16 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
         last_audio_ms = now;
         if (now - last_log >= 1000) {
             last_log = now;
-            LOG_INF("SPK RX bytes=%u overflow=%u pkts=%u audio=%u ctrl=%u bad=%u drop=%u empty=%u",
-                    (unsigned)g_spk_test_len,
-                    (unsigned)g_spk_test_overflow,
+            LOG_INF("SPK RX q=%u pkts=%u audio=%u ctrl=%u bad=%u dec=%u drop=%u empty=%u rate=%u",
+                    (unsigned)spk_ring_count(),
                     (unsigned)rx_pkts,
                     (unsigned)rx_audio_pkts,
                     (unsigned)rx_ctrl_pkts,
                     (unsigned)rx_bad_hdr,
+                    (unsigned)rx_decode_err,
                     (unsigned)rx_drop_buf,
-                    (unsigned)rx_empty_payload);
+                    (unsigned)rx_empty_payload,
+                    (unsigned)spk_rx_rate_permille());
         }
     }
 }
@@ -450,216 +810,106 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
         return;
     }
 
-    bool eos_pending = false;
     int64_t last_log = 0;
     bool spk_running = false;
-    uint8_t *pending_buf = NULL;
-    size_t pending_len = 0;
-    static int16_t silence_frame[SPK_FRAME_SAMPLES] = {0};
-    static int16_t stereo_frame[SPK_FRAME_SAMPLES * 2];
-    /* Lightweight DSP state (per-channel mono) */
-    static float dc_x1 = 0.0f;
-    static float dc_y1 = 0.0f;
-    static float lp_y1 = 0.0f;
-    /* Simple voice EQ (two peaking biquads) */
-    static float eq1_x1 = 0.0f, eq1_x2 = 0.0f, eq1_y1 = 0.0f, eq1_y2 = 0.0f;
-    static float eq2_x1 = 0.0f, eq2_x2 = 0.0f, eq2_y1 = 0.0f, eq2_y2 = 0.0f;
+    bool clip_mode = false;
+    bool stream_mode = false;
+    bool have_last_pcm = false;
+    static uint8_t enc_frame[SPK_ENC_FRAME_MAX];
+    static int16_t pcm_frame[SPK_FRAME_SAMPLES];
+    static int16_t last_pcm[SPK_FRAME_SAMPLES];
+    static const uint8_t silence_frame[SPK_FRAME_BYTES] = {0};
 
     while (1) {
-        k_sem_take(&g_spk_test_sem, K_FOREVER);
-        if (g_spk_test_len == 0) {
-            continue;
-        }
-        ret = hal_spk_start();
-        if (ret != HAL_OK) {
-            LOG_ERR("spk start failed: %d", ret);
-            continue;
-        }
-        spk_running = true;
-        size_t off = 0;
-        while (off < g_spk_test_len) {
-            size_t left = g_spk_test_len - off;
-            size_t chunk = left > SPK_FRAME_BYTES ? SPK_FRAME_BYTES : left;
-            const int16_t *mono = (const int16_t *)(g_spk_test_buf + off);
-            size_t mono_samples = chunk / sizeof(int16_t);
-            if (mono_samples > SPK_FRAME_SAMPLES) {
-                mono_samples = SPK_FRAME_SAMPLES;
-            }
-            for (size_t i = 0; i < SPK_FRAME_SAMPLES; i++) {
-                float x = (i < mono_samples) ? (float)mono[i] : 0.0f;
-                /* DC blocker / high-pass: y = x - x1 + R*y1 */
-                const float dc_r = 0.99f;
-                float y = x - dc_x1 + dc_r * dc_y1;
-                dc_x1 = x;
-                dc_y1 = y;
-                /* Pre-gain attenuation to reduce noise floor */
-                const float pre_gain = 1.10f;
-                y *= pre_gain;
-                /* Voice EQ: +3dB @ 1.5k (Q=1.0), +2dB @ 4.5k (Q=0.9) */
-                {
-                    const float b0 = 1.0781544f, b1 = -1.3478988f, b2 = 0.54294974f;
-                    const float a1 = -1.3478988f, a2 = 0.6211041f;
-                    float out = b0 * y + b1 * eq1_x1 + b2 * eq1_x2 - a1 * eq1_y1 - a2 * eq1_y2;
-                    eq1_x2 = eq1_x1;
-                    eq1_x1 = y;
-                    eq1_y2 = eq1_y1;
-                    eq1_y1 = out;
-                    y = out;
-                }
-                {
-                    const float b0 = 1.0846382f, b1 = 0.2626373f, b2 = 0.26159608f;
-                    const float a1 = 0.2626373f, a2 = 0.34623435f;
-                    float out = b0 * y + b1 * eq2_x1 + b2 * eq2_x2 - a1 * eq2_y1 - a2 * eq2_y2;
-                    eq2_x2 = eq2_x1;
-                    eq2_x1 = y;
-                    eq2_y2 = eq2_y1;
-                    eq2_y1 = out;
-                    y = out;
-                }
-                /* Gentle low-pass to reduce HF hiss (approx 7 kHz @ 16 kHz) */
-                const float lp_a = 0.25f;
-                lp_y1 = lp_a * lp_y1 + (1.0f - lp_a) * y;
-                y = lp_y1;
-                /* Noise gate with soft knee to reduce hiss on silence */
-                const float gate_th = 250.0f;
-                const float gate_knee = 150.0f;
-                float ay = y >= 0.0f ? y : -y;
-                if (ay < gate_th) {
-                    float t = ay / gate_th;
-                    float gain = (t < (gate_knee / gate_th)) ? (t * t) : t;
-                    y *= gain;
-                }
-                /* Soft limiter */
-                const float limit = 30000.0f;
-                if (y > limit) {
-                    y = limit + (y - limit) * 0.50f;
-                } else if (y < -limit) {
-                    y = -limit + (y + limit) * 0.50f;
-                }
-                if (y > 32767.0f) {
-                    y = 32767.0f;
-                } else if (y < -32768.0f) {
-                    y = -32768.0f;
-                }
-                int16_t v = (int16_t)y;
-                stereo_frame[i * 2] = v;
-                stereo_frame[i * 2 + 1] = v;
-            }
-
-            uint8_t *st = (uint8_t *)stereo_frame;
-            size_t stereo_bytes = SPK_FRAME_SAMPLES * 2 * sizeof(int16_t);
-            size_t wrote = 0;
-            while (wrote < stereo_bytes) {
-                size_t blk = SPK_FRAME_BYTES;
-                int w = hal_spk_write(st + wrote, blk, 1000);
-                if (w != HAL_OK) {
-                    g_spk_play_errs++;
-                    LOG_ERR("spk write err: %d", w);
-                    wrote = stereo_bytes;
-                    break;
-                }
-                g_spk_play_frames++;
-                wrote += blk;
-            }
-            off += chunk;
-        }
-        g_spk_test_len = 0;
-        if (spk_running) {
-            (void)hal_spk_stop();
-            spk_running = false;
-        }
-        const char done[] = "PLAY_DONE";
-        if (app_uplink_service_is_ready()) {
-            (void)app_uplink_publish(APP_DATA_PART_CTRL,
-                                     APP_UPLINK_PRIO_HIGH,
-                                     done,
-                                     sizeof(done) - 1,
-                                     (uint32_t)k_uptime_get());
-        }
-        if (!DOWNLINK_TEST) {
-            app_state_set(AUDIO_MODE_UPLOAD);
-        }
-        g_spk_accept_audio = false;
-    }
-
-    while (1) {
-        struct spk_frame_msg msg;
-        int q = k_msgq_get(&g_spk_frame_q, &msg, K_MSEC(1000));
-        if (q == 0) {
-            if (msg.end) {
-                eos_pending = true;
+        if (!spk_running) {
+            size_t used = spk_ring_count();
+            bool eos = spk_is_eos_received();
+            if (used == 0U) {
+                k_sleep(K_MSEC(10));
                 continue;
             }
-            if (msg.buf && msg.len > 0) {
-                if (!spk_running) {
-                    /* Buffer one frame before starting to reduce underrun risk. */
-                    if (pending_buf == NULL) {
-                        pending_buf = msg.buf;
-                        pending_len = msg.len;
-                        continue;
-                    }
-                    if (k_msgq_num_used_get(&g_spk_frame_q) < SPK_PREBUFFER_FRAMES) {
-                        /* Keep buffering until we have enough prebuffer. */
-                        k_mem_slab_free(&spk_rx_slab, msg.buf);
-                        continue;
-                    }
-                    ret = hal_spk_start();
-                    if (ret != HAL_OK) {
-                        LOG_ERR("spk start failed: %d", ret);
-                        if (pending_buf != NULL) {
-                            k_mem_slab_free(&spk_rx_slab, pending_buf);
-                            pending_buf = NULL;
-                            pending_len = 0;
-                        }
-                        k_mem_slab_free(&spk_rx_slab, msg.buf);
-                        continue;
-                    }
-                    spk_running = true;
-                    if (pending_buf != NULL) {
-                        int wp = hal_spk_write(pending_buf, pending_len, 1000);
-                        k_mem_slab_free(&spk_rx_slab, pending_buf);
-                        pending_buf = NULL;
-                        pending_len = 0;
-                        if (wp != HAL_OK) {
-                            g_spk_play_errs++;
-                            LOG_ERR("spk write err: %d", wp);
-                            (void)hal_spk_stop();
-                            spk_running = false;
-                            k_mem_slab_free(&spk_rx_slab, msg.buf);
-                            continue;
-                        } else {
-                            g_spk_play_frames++;
-                        }
-                    }
-                }
-                int w = hal_spk_write(msg.buf, msg.len, 1000);
-                if (w != HAL_OK) {
-                    g_spk_play_errs++;
-                    LOG_ERR("spk write err: %d", w);
-                    (void)hal_spk_stop();
-                    spk_running = false;
+            if (!clip_mode && !stream_mode) {
+                uint32_t rate_pm = spk_rx_rate_permille();
+                if (eos) {
+                    clip_mode = true;
+                } else if (used >= SPK_HIGH_WATER_FRAMES && rate_pm >= SPK_STREAM_RATE_MIN_PM) {
+                    stream_mode = true;
                 } else {
-                    g_spk_play_frames++;
+                    k_sleep(K_MSEC(10));
+                    continue;
                 }
-                k_mem_slab_free(&spk_rx_slab, msg.buf);
+            }
+            ret = hal_spk_start();
+            if (ret != HAL_OK) {
+                LOG_ERR("spk start failed: %d", ret);
+                k_sleep(K_MSEC(20));
+                continue;
+            }
+            spk_dsp_reset();
+            spk_running = true;
+        }
+
+        size_t out_len = 0U;
+        for (int f = 0; f < 2; f++) {
+            size_t enc_len = 0U;
+            bool have_frame = spk_ring_pop(enc_frame, sizeof(enc_frame), &enc_len);
+            if (have_frame) {
+                size_t pcm_samples = 0U;
+                int dec = audio_decode_frame_to_pcm16(enc_frame,
+                                                      enc_len,
+                                                      pcm_frame,
+                                                      SPK_FRAME_SAMPLES,
+                                                      &pcm_samples);
+                if (dec == HAL_OK && pcm_samples > 0U) {
+                    size_t pcm_bytes = pcm_samples * sizeof(int16_t);
+                    memcpy(g_spk_play_buf + out_len, pcm_frame, pcm_bytes);
+                    memcpy(last_pcm, pcm_frame, pcm_bytes);
+                    have_last_pcm = true;
+                    out_len += pcm_bytes;
+                } else {
+                    memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
+                    out_len += SPK_FRAME_BYTES;
+                }
+            } else if (spk_is_eos_received()) {
+                break;
+            } else if (have_last_pcm && stream_mode) {
+                memcpy(g_spk_play_buf + out_len, last_pcm, SPK_FRAME_BYTES);
+                out_len += SPK_FRAME_BYTES;
+            } else {
+                memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
+                out_len += SPK_FRAME_BYTES;
             }
         }
-        if (q != 0 && spk_running && !eos_pending) {
-            /* Feed silence to keep I2S alive if BLE jitter causes gaps. */
-            (void)hal_spk_write(silence_frame, sizeof(silence_frame), 1000);
+
+        if (out_len > 0U) {
+            bool final_chunk = spk_is_eos_received() && spk_ring_count() == 0U;
+            spk_dsp_process_pcm((int16_t *)g_spk_play_buf, out_len / sizeof(int16_t), final_chunk);
+            int w = hal_spk_write(g_spk_play_buf, out_len, 1000);
+            if (w != HAL_OK) {
+                g_spk_play_errs++;
+                LOG_ERR("spk write err: %d", w);
+                (void)hal_spk_stop();
+                spk_running = false;
+            } else {
+                g_spk_play_frames += (uint32_t)(out_len / SPK_FRAME_BYTES);
+            }
+        } else if (spk_is_eos_received() && spk_ring_count() == 0U) {
+            (void)hal_spk_stop();
+            spk_running = false;
         }
 
         int64_t now = k_uptime_get();
         if (now - last_log >= 1000) {
             last_log = now;
-            LOG_INF("SPK PLAY frames=%u errs=%u q=%u",
+            LOG_INF("SPK PLAY frames=%u errs=%u q=%u mode=%s",
                     g_spk_play_frames, g_spk_play_errs,
-                    (unsigned)k_msgq_num_used_get(&g_spk_frame_q));
+                    (unsigned)spk_ring_count(),
+                    clip_mode ? "clip" : (stream_mode ? "stream" : "fill"));
         }
 
         if (g_spk_buf_full) {
-            size_t used = k_msgq_num_used_get(&g_spk_frame_q);
-            if (used <= SPK_BUF_LOW_WATER && app_uplink_service_is_ready()) {
+            size_t used = spk_ring_count();
+            if (used <= SPK_LOW_WATER_FRAMES && app_uplink_service_is_ready()) {
                 const char low[] = "BUF_LOW";
                 (void)app_uplink_publish(APP_DATA_PART_CTRL,
                                          APP_UPLINK_PRIO_HIGH,
@@ -670,28 +920,7 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             }
         }
 
-        if (q != 0 && eos_pending && pending_buf != NULL && !spk_running) {
-            ret = hal_spk_start();
-            if (ret == HAL_OK) {
-                spk_running = true;
-                int wp = hal_spk_write(pending_buf, pending_len, 1000);
-                k_mem_slab_free(&spk_rx_slab, pending_buf);
-                pending_buf = NULL;
-                pending_len = 0;
-                if (wp != HAL_OK) {
-                    g_spk_play_errs++;
-                    LOG_ERR("spk write err: %d", wp);
-                    (void)hal_spk_stop();
-                    spk_running = false;
-                } else {
-                    g_spk_play_frames++;
-                }
-            } else {
-                LOG_ERR("spk start failed: %d", ret);
-            }
-        }
-
-        if (eos_pending && k_msgq_num_used_get(&g_spk_frame_q) == 0 && pending_buf == NULL) {
+        if (spk_is_eos_received() && spk_ring_count() == 0U && !spk_running) {
             const char done[] = "PLAY_DONE";
             if (app_uplink_service_is_ready()) {
                 (void)app_uplink_publish(APP_DATA_PART_CTRL,
@@ -700,15 +929,15 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
                                          sizeof(done) - 1,
                                          (uint32_t)k_uptime_get());
             }
-            eos_pending = false;
-            g_spk_accept_audio = false;
             if (!DOWNLINK_TEST) {
                 app_state_set(AUDIO_MODE_UPLOAD);
             }
-            if (spk_running) {
-                (void)hal_spk_stop();
-                spk_running = false;
-            }
+            g_spk_accept_audio = false;
+            clip_mode = false;
+            stream_mode = false;
+            have_last_pcm = false;
+            spk_ring_reset();
+            app_rtc_playback_critical_exit();
         }
     }
 }
@@ -899,10 +1128,8 @@ static void ble_test_entry(void *p1, void *p2, void *p3)
 #define MIC_UPLOAD_PRIO 5
 
 #define MIC_FRAME_Q_LEN 16
-static struct k_thread g_mic_test_thread;
 RT_THREAD_STACK_DEFINE(g_mic_test_stack, MIC_TEST_STACK_SIZE);
 
-static struct k_thread g_mic_upload_thread;
 RT_THREAD_STACK_DEFINE(g_mic_upload_stack, MIC_UPLOAD_STACK_SIZE);
 
 struct mic_frame_msg {
@@ -1003,6 +1230,10 @@ static void mic_capture_entry(void *p1, void *p2, void *p3)
     LOG_INF("mic_capture: entry");
 
     while (1) {
+        while (g_mic_pause_req) {
+            k_msleep(20);
+        }
+
         LOG_INF("mic_capture: init");
         int ret = hal_mic_init();
         if (ret != HAL_OK) {
@@ -1029,6 +1260,9 @@ static void mic_capture_entry(void *p1, void *p2, void *p3)
         LOG_INF("MIC test thread started");
 
         while (1) {
+            if (g_mic_pause_req) {
+                break;
+            }
             void *buf = NULL;
             size_t len = 0;
             int r = hal_mic_read_block(&buf, &len, 1000);
@@ -1048,12 +1282,22 @@ static void mic_capture_entry(void *p1, void *p2, void *p3)
                     (void)hal_mic_release(buf);
                 }
             } else if (r != HAL_OK) {
+                if (g_mic_pause_req || r == HAL_EBUSY) {
+                    break;
+                }
                 LOG_ERR("hal_mic_read_block failed: %d", r);
                 break;
             }
         }
         (void)hal_mic_stop();
-        k_msleep(200);
+        if (g_mic_pause_req) {
+            mic_drop_queue();
+            while (g_mic_pause_req) {
+                k_msleep(20);
+            }
+        } else {
+            k_msleep(200);
+        }
     }
 }
 
@@ -1077,6 +1321,12 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
     uint32_t sample_cnt = 0;
 
     while (1) {
+        if (g_mic_pause_req) {
+            mic_drop_queue();
+            k_msleep(20);
+            continue;
+        }
+
         struct mic_frame_msg msg;
         int q = k_msgq_get(&g_mic_frame_q, &msg, K_MSEC(1000));
         if (q != 0) {
@@ -1189,6 +1439,8 @@ static int ble_ensure_started(void)
 void app_rtc_init(void)
 {
     app_state_init(AUDIO_MODE_BOOT);
+    k_mutex_init(&g_spk_ring_lock);
+    spk_ring_reset();
 
     LOG_INF("Build: DOWNLINK_TEST=%d MIC_TEST=%d SPK_STREAM=%d",
             DOWNLINK_TEST,
@@ -1260,6 +1512,8 @@ void app_rtc_start(void)
                                   "mic_cap");
     if (mic_ret != 0) {
         LOG_ERR("mic_cap start failed: %d", mic_ret);
+    } else {
+        g_mic_cap_started = true;
     }
 
     int up_ret = rt_thread_start(&g_mic_upload_thread,
@@ -1272,11 +1526,12 @@ void app_rtc_start(void)
                                  "mic_up");
     if (up_ret != 0) {
         LOG_ERR("mic_up start failed: %d", up_ret);
+    } else {
+        g_mic_up_started = true;
     }
 #endif
 
 #ifdef CONFIG_SPK_STREAM
-    k_sem_init(&g_spk_test_sem, 0, 1);
     (void)rt_thread_start(&g_spk_rx_thread,
                           g_spk_rx_stack,
                           K_THREAD_STACK_SIZEOF(g_spk_rx_stack),

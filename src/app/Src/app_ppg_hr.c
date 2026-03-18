@@ -76,6 +76,8 @@ typedef enum {
 
 static struct k_thread g_ppg_hr_thread;
 RT_THREAD_STACK_DEFINE(g_ppg_hr_stack, APP_PPG_HR_STACK_SIZE);
+static bool g_ppg_hr_started;
+static bool g_ppg_hr_paused;
 static struct k_mutex g_ppg_hr_state_lock;
 static app_ppg_hr_state_t g_ppg_hr_state = APP_PPG_HR_ST_NOT_READY;
 static hal_ppg_sample_t g_ppg_hr_latest = {0};
@@ -624,9 +626,7 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
 
 int app_ppg_hr_start(void)
 {
-    static bool started;
-
-    if (started) {
+    if (g_ppg_hr_started) {
         return HAL_OK;
     }
 
@@ -661,9 +661,29 @@ int app_ppg_hr_start(void)
         return HAL_EIO;
     }
 
-    started = true;
+    g_ppg_hr_started = true;
     LOG_INF("gh3026 app start");
     return HAL_OK;
+}
+
+void app_ppg_hr_pause(void)
+{
+    if (!g_ppg_hr_started || g_ppg_hr_paused) {
+        return;
+    }
+    (void)hal_ppg_stop();
+    k_thread_suspend(&g_ppg_hr_thread);
+    g_ppg_hr_paused = true;
+}
+
+void app_ppg_hr_resume(void)
+{
+    if (!g_ppg_hr_started || !g_ppg_hr_paused) {
+        return;
+    }
+    (void)hal_ppg_start();
+    k_thread_resume(&g_ppg_hr_thread);
+    g_ppg_hr_paused = false;
 }
 
 app_ppg_hr_state_t app_ppg_hr_get_state(void)
