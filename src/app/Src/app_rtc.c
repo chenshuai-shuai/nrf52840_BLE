@@ -272,6 +272,12 @@ static float32_t g_spk_dsp_in[SPK_FRAME_SAMPLES * 2];
 static float32_t g_spk_dsp_out[SPK_FRAME_SAMPLES * 2];
 static uint32_t g_spk_fade_in_left = 0U;
 static bool g_spk_dsp_ready = false;
+static uint32_t g_spk_play_sid = 0U;
+static int64_t g_spk_t_ctrl_ms = 0;
+static int64_t g_spk_t_first_audio_ms = 0;
+static int64_t g_spk_t_start_ms = 0;
+static int64_t g_spk_t_eos_ms = 0;
+static int64_t g_spk_t_done_ms = 0;
 
 static void mic_drop_queue(void);
 
@@ -415,6 +421,9 @@ static void spk_mark_eos(void)
     k_mutex_lock(&g_spk_ring_lock, K_FOREVER);
     g_spk_eos_received = true;
     k_mutex_unlock(&g_spk_ring_lock);
+    if (g_spk_t_eos_ms == 0) {
+        g_spk_t_eos_ms = k_uptime_get();
+    }
 }
 
 static bool spk_is_eos_received(void)
@@ -577,6 +586,12 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
     }
     if (len >= 14 && memcmp(buf, "APP_PLAY_START", 14) == 0) {
         LOG_INF("CTRL APP_PLAY_START");
+        g_spk_play_sid++;
+        g_spk_t_ctrl_ms = k_uptime_get();
+        g_spk_t_first_audio_ms = 0;
+        g_spk_t_start_ms = 0;
+        g_spk_t_eos_ms = 0;
+        g_spk_t_done_ms = 0;
         app_rtc_playback_critical_enter();
         g_spk_accept_audio = true;
         g_spk_buf_full = false;
@@ -697,6 +712,9 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
         }
 
         rx_audio_pkts++;
+        if (g_spk_t_first_audio_ms == 0) {
+            g_spk_t_first_audio_ms = k_uptime_get();
+        }
         if (!last_seq_valid) {
             last_seq = hdr->seq;
             last_seq_valid = true;
@@ -845,6 +863,9 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
                 k_sleep(K_MSEC(20));
                 continue;
             }
+            if (g_spk_t_start_ms == 0) {
+                g_spk_t_start_ms = k_uptime_get();
+            }
             spk_dsp_reset();
             spk_running = true;
         }
@@ -922,6 +943,7 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
 
         if (spk_is_eos_received() && spk_ring_count() == 0U && !spk_running) {
             const char done[] = "PLAY_DONE";
+            g_spk_t_done_ms = k_uptime_get();
             if (app_uplink_service_is_ready()) {
                 (void)app_uplink_publish(APP_DATA_PART_CTRL,
                                          APP_UPLINK_PRIO_HIGH,
@@ -937,6 +959,16 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             stream_mode = false;
             have_last_pcm = false;
             spk_ring_reset();
+            LOG_INF("SPK TIMING sid=%u ctrl=%lld first=%lld start=%lld eos=%lld done=%lld wait=%lld play=%lld total=%lld",
+                    (unsigned)g_spk_play_sid,
+                    g_spk_t_ctrl_ms,
+                    g_spk_t_first_audio_ms,
+                    g_spk_t_start_ms,
+                    g_spk_t_eos_ms,
+                    g_spk_t_done_ms,
+                    (long long)((g_spk_t_first_audio_ms > 0 && g_spk_t_start_ms > 0) ? (g_spk_t_start_ms - g_spk_t_first_audio_ms) : -1),
+                    (long long)((g_spk_t_start_ms > 0 && g_spk_t_done_ms > 0) ? (g_spk_t_done_ms - g_spk_t_start_ms) : -1),
+                    (long long)((g_spk_t_ctrl_ms > 0 && g_spk_t_done_ms > 0) ? (g_spk_t_done_ms - g_spk_t_ctrl_ms) : -1));
             app_rtc_playback_critical_exit();
         }
     }
