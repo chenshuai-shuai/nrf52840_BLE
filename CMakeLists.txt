@@ -12,6 +12,7 @@ set(APP_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_uplink_service.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_lifecycle.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_rtc.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/spk_postproc.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_state.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/system_state.c
 )
@@ -184,6 +185,17 @@ target_include_directories(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hal/Inc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/Inc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/common/Inc
+  ${CMAKE_CURRENT_SOURCE_DIR}/Android_nRF_BLE/third_party/speexdsp/include/speex
+  ${CMAKE_CURRENT_SOURCE_DIR}/Android_nRF_BLE/third_party/speexdsp/libspeexdsp
+)
+
+target_sources(app PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/Android_nRF_BLE/third_party/speexdsp/libspeexdsp/resample.c
+)
+
+set_source_files_properties(
+  ${CMAKE_CURRENT_SOURCE_DIR}/Android_nRF_BLE/third_party/speexdsp/libspeexdsp/resample.c
+  PROPERTIES COMPILE_DEFINITIONS "OUTSIDE_SPEEX;RANDOM_PREFIX=nrfspx;FLOATING_POINT;EXPORT="
 )
 
 if(CONFIG_DRIVER_PPG_NRF)

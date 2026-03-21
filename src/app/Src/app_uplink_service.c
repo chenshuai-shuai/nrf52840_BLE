@@ -11,9 +11,11 @@
 LOG_MODULE_REGISTER(app_uplink, LOG_LEVEL_WRN);
 
 #define APP_UPLINK_STACK_SIZE 2560
-#define APP_UPLINK_PRIORITY   6
+#define APP_UPLINK_PRIORITY   5
 #define APP_UPLINK_Q_LEN      64
-#define APP_DOWNLINK_Q_LEN    64
+#define APP_DOWNLINK_Q_LEN    128
+#define APP_DOWNLINK_RX_BURST 48
+#define APP_UPLINK_IDLE_SLEEP_MS 1
 #define APP_UPLINK_MIN_ATT_MTU 23
 #define APP_UPLINK_ATT_HDR_LEN 3
 #define APP_UPLINK_MAX_REC_LEN 256
@@ -164,18 +166,18 @@ static bool dequeue_item(app_uplink_item_t *out)
     if (k_msgq_get(&g_uplink_q_normal, out, K_NO_WAIT) == 0) {
         return true;
     }
-    if (k_msgq_get(&g_uplink_q_low, out, K_MSEC(20)) == 0) {
+    if (k_msgq_get(&g_uplink_q_low, out, K_NO_WAIT) == 0) {
         return true;
     }
     return false;
 }
 
-static void poll_downlink_once(uint32_t *rx_ok, uint32_t *rx_drop)
+static bool poll_downlink_once(uint32_t *rx_ok, uint32_t *rx_drop)
 {
     uint8_t buf[APP_UPLINK_MAX_REC_LEN];
     int rret = hal_ble_recv(buf, sizeof(buf), 0);
     if (rret <= 0) {
-        return;
+        return false;
     }
 
     app_data_ticket_t ticket;
@@ -189,7 +191,7 @@ static void poll_downlink_once(uint32_t *rx_ok, uint32_t *rx_drop)
         if (rx_drop != NULL) {
             (*rx_drop)++;
         }
-        return;
+        return true;
     }
 
     app_downlink_item_t item = {
@@ -202,6 +204,21 @@ static void poll_downlink_once(uint32_t *rx_ok, uint32_t *rx_drop)
     } else if (rx_drop != NULL) {
         (*rx_drop)++;
     }
+    return true;
+}
+
+static uint32_t poll_downlink_burst(uint32_t *rx_ok, uint32_t *rx_drop)
+{
+    uint32_t drained = 0U;
+
+    while (drained < APP_DOWNLINK_RX_BURST) {
+        if (!poll_downlink_once(rx_ok, rx_drop)) {
+            break;
+        }
+        drained++;
+    }
+
+    return drained;
 }
 
 static void uplink_thread_entry(void *p1, void *p2, void *p3)
@@ -234,12 +251,13 @@ static void uplink_thread_entry(void *p1, void *p2, void *p3)
             }
         }
 
-        for (int i = 0; i < 4; i++) {
-            poll_downlink_once(&recv_ok, &recv_drop);
-        }
+        uint32_t drained = poll_downlink_burst(&recv_ok, &recv_drop);
 
         if (!have_item) {
             if (!dequeue_item(&item)) {
+                if (drained == 0U) {
+                    k_msleep(APP_UPLINK_IDLE_SLEEP_MS);
+                }
                 continue;
             }
             have_item = true;

@@ -15,6 +15,7 @@
 #include "hal_spk.h"
 #include "hal_mic.h"
 #include "error.h"
+#include "spk_postproc.h"
 
 #include <zephyr/logging/log.h>
 #include "rt_thread.h"
@@ -214,12 +215,11 @@ static void mic_dsp_process(int16_t *pcm, size_t samples)
 #define SPK_FRAME_BYTES (SPK_FRAME_SAMPLES * sizeof(int16_t))
 #define SPK_ENC_FRAME_MAX 88U
 #define SPK_RING_FRAMES 512U               /* ~51 KB for ADPCM frames */
-#define SPK_HIGH_WATER_FRAMES 300U         /* ~3.0 s */
-#define SPK_LOW_WATER_FRAMES 100U          /* ~1.0 s */
-#define SPK_STREAM_RATE_MIN_PM 1100U       /* 1.1x realtime */
-#define SPK_DSP_GAIN 0.38f                 /* ~ -8.4 dB */
-#define SPK_DSP_LIMIT 0.72f
-#define SPK_DSP_FADE_SAMPLES 80U           /* 5 ms @ 16 kHz */
+#define SPK_HIGH_WATER_FRAMES 24U          /* ~240 ms */
+#define SPK_LOW_WATER_FRAMES 8U            /* ~80 ms */
+#define SPK_STREAM_RATE_MIN_PM 980U        /* ~0.98x realtime */
+#define SPK_FORCE_START_FRAMES 96U         /* ~960 ms backlog */
+#define SPK_FORCE_START_WAIT_MS 700U
 
 struct spk_enc_slot {
     uint8_t len;
@@ -259,19 +259,6 @@ static uint8_t g_spk_asm_buf[SPK_FRAME_BYTES * 2];
 static uint8_t g_spk_asm_part_buf[AUDIO_MAX_FRAGS][AUDIO_PAYLOAD_MAX];
 static uint16_t g_spk_asm_part_len[AUDIO_MAX_FRAGS];
 static uint8_t g_spk_play_buf[SPK_FRAME_BYTES * 2];
-static arm_biquad_casd_df1_inst_f32 g_spk_hp_biquad;
-static float32_t g_spk_hp_state[4];
-static const float32_t g_spk_hp_coeffs[5] = {
-    0.9726139f,
-    -1.9452278f,
-    0.9726139f,
-    1.9444777f,
-    -0.9459779f,
-};
-static float32_t g_spk_dsp_in[SPK_FRAME_SAMPLES * 2];
-static float32_t g_spk_dsp_out[SPK_FRAME_SAMPLES * 2];
-static uint32_t g_spk_fade_in_left = 0U;
-static bool g_spk_dsp_ready = false;
 static uint32_t g_spk_play_sid = 0U;
 static int64_t g_spk_t_ctrl_ms = 0;
 static int64_t g_spk_t_first_audio_ms = 0;
@@ -281,77 +268,37 @@ static int64_t g_spk_t_done_ms = 0;
 
 static void mic_drop_queue(void);
 
-static void spk_dsp_reset(void)
+static size_t spk_make_gap_fill_frame(int16_t *dst,
+                                      const int16_t *last_pcm,
+                                      size_t samples,
+                                      uint32_t gap_index)
 {
-    memset(g_spk_hp_state, 0, sizeof(g_spk_hp_state));
-    g_spk_fade_in_left = SPK_DSP_FADE_SAMPLES;
-}
-
-static void spk_dsp_init_once(void)
-{
-    if (!g_spk_dsp_ready) {
-        arm_biquad_cascade_df1_init_f32(&g_spk_hp_biquad, 1, (float32_t *)g_spk_hp_coeffs, g_spk_hp_state);
-        g_spk_dsp_ready = true;
-    }
-    spk_dsp_reset();
-}
-
-static void spk_dsp_process_pcm(int16_t *pcm, size_t samples, bool fade_out_tail)
-{
-    if (pcm == NULL || samples == 0U) {
-        return;
-    }
-    if (!g_spk_dsp_ready) {
-        spk_dsp_init_once();
+    if (dst == NULL || last_pcm == NULL || samples == 0U) {
+        return 0U;
     }
 
-    if (samples > ARRAY_SIZE(g_spk_dsp_in)) {
-        samples = ARRAY_SIZE(g_spk_dsp_in);
+    /* For short underruns, emit only a tiny decaying tail instead of
+     * repeating the last voiced frame, which produces an audible buzz. */
+    static const uint32_t k_gap_gains_q15[] = {
+        12288U, /* 0.375 */
+        6144U,  /* 0.1875 */
+        3072U,  /* 0.09375 */
+        1536U,  /* 0.046875 */
+    };
+    if (gap_index >= ARRAY_SIZE(k_gap_gains_q15)) {
+        return 0U;
     }
+    uint32_t base_q15 = k_gap_gains_q15[gap_index];
 
     for (size_t i = 0; i < samples; i++) {
-        g_spk_dsp_in[i] = (float32_t)pcm[i] / 32768.0f;
+        uint32_t fade_q15 = (uint32_t)(((samples - i) * 32768U) / (samples + 1U));
+        int32_t v = (int32_t)last_pcm[i];
+        v = (v * (int32_t)base_q15) >> 15;
+        v = (v * (int32_t)fade_q15) >> 15;
+        dst[i] = (int16_t)v;
     }
 
-    arm_biquad_cascade_df1_f32(&g_spk_hp_biquad, g_spk_dsp_in, g_spk_dsp_out, (uint32_t)samples);
-
-    size_t fade_out_samples = fade_out_tail ? MIN(samples, (size_t)SPK_DSP_FADE_SAMPLES) : 0U;
-    size_t fade_out_start = samples - fade_out_samples;
-
-    for (size_t i = 0; i < samples; i++) {
-        float32_t y = g_spk_dsp_out[i] * SPK_DSP_GAIN;
-
-        if (g_spk_fade_in_left > 0U) {
-            uint32_t done = SPK_DSP_FADE_SAMPLES - g_spk_fade_in_left;
-            float32_t fade = (float32_t)(done + 1U) / (float32_t)SPK_DSP_FADE_SAMPLES;
-            y *= fade;
-            g_spk_fade_in_left--;
-        }
-
-        if (fade_out_tail && i >= fade_out_start) {
-            size_t rem = samples - i;
-            float32_t fade = (float32_t)rem / (float32_t)(fade_out_samples + 1U);
-            y *= fade;
-        }
-
-        float32_t ay = y >= 0.0f ? y : -y;
-        if (ay > SPK_DSP_LIMIT) {
-            float32_t over = ay - SPK_DSP_LIMIT;
-            ay = SPK_DSP_LIMIT + over * 0.20f;
-            if (ay > 0.92f) {
-                ay = 0.92f;
-            }
-            y = (y >= 0.0f) ? ay : -ay;
-        }
-
-        if (y > 0.999f) {
-            y = 0.999f;
-        } else if (y < -0.999f) {
-            y = -0.999f;
-        }
-
-        pcm[i] = (int16_t)(y * 32767.0f);
-    }
+    return samples * sizeof(int16_t);
 }
 
 static void spk_ring_reset(void)
@@ -526,9 +473,11 @@ static int audio_decode_frame_to_pcm16(const uint8_t *in,
                                        size_t in_len,
                                        int16_t *out,
                                        size_t out_cap_samples,
-                                       size_t *out_samples)
+                                       size_t *out_samples,
+                                       uint32_t *out_rate_hz)
 {
-    if (in == NULL || out == NULL || out_samples == NULL || in_len == 0U || out_cap_samples == 0U) {
+    if (in == NULL || out == NULL || out_samples == NULL || out_rate_hz == NULL ||
+        in_len == 0U || out_cap_samples == 0U) {
         return HAL_EINVAL;
     }
 
@@ -541,6 +490,7 @@ static int audio_decode_frame_to_pcm16(const uint8_t *in,
         }
         memcpy(out, &in[1], samples * sizeof(int16_t));
         *out_samples = samples;
+        *out_rate_hz = 16000U;
         return HAL_OK;
     }
 
@@ -548,8 +498,18 @@ static int audio_decode_frame_to_pcm16(const uint8_t *in,
         return HAL_EINVAL;
     }
 
+    uint8_t sample_rate_khz = in[1];
     uint8_t sample_count = in[7];
-    if (sample_count < 2U || sample_count > out_cap_samples) {
+    if (sample_count < 2U) {
+        return HAL_EINVAL;
+    }
+
+    size_t need_out_samples = sample_count;
+    if (sample_rate_khz != 8U && sample_rate_khz != 16U) {
+        return HAL_EINVAL;
+    }
+
+    if (need_out_samples > out_cap_samples) {
         return HAL_EINVAL;
     }
 
@@ -567,15 +527,16 @@ static int audio_decode_frame_to_pcm16(const uint8_t *in,
 
     out[0] = pred;
     size_t out_i = 1U;
-    for (size_t i = 0U; i < need_bytes && out_i < sample_count; i++) {
+    for (size_t i = 0U; i < need_bytes && out_i < need_out_samples; i++) {
         uint8_t packed = in[AUDIO_CODEC_HDR_LEN + i];
         out[out_i++] = ima_adpcm_decode_nibble((uint8_t)(packed & 0x0F), &pred, &idx);
-        if (out_i < sample_count) {
+        if (out_i < need_out_samples) {
             out[out_i++] = ima_adpcm_decode_nibble((uint8_t)((packed >> 4) & 0x0F), &pred, &idx);
         }
     }
 
     *out_samples = out_i;
+    *out_rate_hz = (uint32_t)sample_rate_khz * 1000U;
     return HAL_OK;
 }
 
@@ -827,12 +788,18 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
         LOG_ERR("spk init failed: %d", ret);
         return;
     }
+    ret = spk_postproc_init();
+    if (ret != HAL_OK) {
+        LOG_ERR("spk postproc init failed: %d", ret);
+        return;
+    }
 
     int64_t last_log = 0;
     bool spk_running = false;
     bool clip_mode = false;
     bool stream_mode = false;
     bool have_last_pcm = false;
+    uint32_t gap_fill_frames = 0U;
     static uint8_t enc_frame[SPK_ENC_FRAME_MAX];
     static int16_t pcm_frame[SPK_FRAME_SAMPLES];
     static int16_t last_pcm[SPK_FRAME_SAMPLES];
@@ -848,9 +815,14 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             }
             if (!clip_mode && !stream_mode) {
                 uint32_t rate_pm = spk_rx_rate_permille();
+                int64_t now = k_uptime_get();
+                bool force_start = (used >= SPK_FORCE_START_FRAMES);
+                bool waited_enough = (g_spk_t_ctrl_ms > 0) &&
+                                     ((uint32_t)(now - g_spk_t_ctrl_ms) >= SPK_FORCE_START_WAIT_MS);
                 if (eos) {
                     clip_mode = true;
-                } else if (used >= SPK_HIGH_WATER_FRAMES && rate_pm >= SPK_STREAM_RATE_MIN_PM) {
+                } else if (used >= SPK_HIGH_WATER_FRAMES &&
+                           (rate_pm >= SPK_STREAM_RATE_MIN_PM || force_start || waited_enough)) {
                     stream_mode = true;
                 } else {
                     k_sleep(K_MSEC(10));
@@ -866,7 +838,7 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             if (g_spk_t_start_ms == 0) {
                 g_spk_t_start_ms = k_uptime_get();
             }
-            spk_dsp_reset();
+            spk_postproc_reset();
             spk_running = true;
         }
 
@@ -876,35 +848,63 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             bool have_frame = spk_ring_pop(enc_frame, sizeof(enc_frame), &enc_len);
             if (have_frame) {
                 size_t pcm_samples = 0U;
+                uint32_t pcm_rate_hz = 0U;
                 int dec = audio_decode_frame_to_pcm16(enc_frame,
                                                       enc_len,
                                                       pcm_frame,
                                                       SPK_FRAME_SAMPLES,
-                                                      &pcm_samples);
+                                                      &pcm_samples,
+                                                      &pcm_rate_hz);
                 if (dec == HAL_OK && pcm_samples > 0U) {
-                    size_t pcm_bytes = pcm_samples * sizeof(int16_t);
-                    memcpy(g_spk_play_buf + out_len, pcm_frame, pcm_bytes);
-                    memcpy(last_pcm, pcm_frame, pcm_bytes);
-                    have_last_pcm = true;
-                    out_len += pcm_bytes;
+                    size_t proc_samples = 0U;
+                    bool frame_final = spk_is_eos_received() && spk_ring_count() == 0U;
+                    int pp = spk_postproc_process_frame(pcm_frame,
+                                                        pcm_samples,
+                                                        pcm_rate_hz,
+                                                        (int16_t *)(g_spk_play_buf + out_len),
+                                                        SPK_FRAME_SAMPLES,
+                                                        &proc_samples,
+                                                        frame_final);
+                    if (pp == HAL_OK && proc_samples > 0U) {
+                        size_t pcm_bytes = proc_samples * sizeof(int16_t);
+                        memcpy(last_pcm, g_spk_play_buf + out_len, pcm_bytes);
+                        have_last_pcm = true;
+                        gap_fill_frames = 0U;
+                        out_len += pcm_bytes;
+                    } else {
+                        memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
+                        gap_fill_frames = 0U;
+                        out_len += SPK_FRAME_BYTES;
+                    }
                 } else {
                     memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
+                    gap_fill_frames = 0U;
                     out_len += SPK_FRAME_BYTES;
                 }
             } else if (spk_is_eos_received()) {
                 break;
             } else if (have_last_pcm && stream_mode) {
-                memcpy(g_spk_play_buf + out_len, last_pcm, SPK_FRAME_BYTES);
-                out_len += SPK_FRAME_BYTES;
+                size_t plc_bytes = spk_make_gap_fill_frame((int16_t *)(g_spk_play_buf + out_len),
+                                                           last_pcm,
+                                                           SPK_FRAME_SAMPLES,
+                                                           gap_fill_frames);
+                if (plc_bytes > 0U) {
+                    out_len += plc_bytes;
+                    gap_fill_frames++;
+                } else {
+                    memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
+                    have_last_pcm = false;
+                    gap_fill_frames = 0U;
+                    out_len += SPK_FRAME_BYTES;
+                }
             } else {
                 memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
+                gap_fill_frames = 0U;
                 out_len += SPK_FRAME_BYTES;
             }
         }
 
         if (out_len > 0U) {
-            bool final_chunk = spk_is_eos_received() && spk_ring_count() == 0U;
-            spk_dsp_process_pcm((int16_t *)g_spk_play_buf, out_len / sizeof(int16_t), final_chunk);
             int w = hal_spk_write(g_spk_play_buf, out_len, 1000);
             if (w != HAL_OK) {
                 g_spk_play_errs++;
@@ -958,6 +958,7 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             clip_mode = false;
             stream_mode = false;
             have_last_pcm = false;
+            gap_fill_frames = 0U;
             spk_ring_reset();
             LOG_INF("SPK TIMING sid=%u ctrl=%lld first=%lld start=%lld eos=%lld done=%lld wait=%lld play=%lld total=%lld",
                     (unsigned)g_spk_play_sid,
