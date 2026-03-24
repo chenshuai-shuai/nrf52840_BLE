@@ -28,3 +28,5 @@ int spk_postproc_process_frame(const int16_t *in_pcm,
                                size_t *out_samples,
                                bool fade_out_tail);
 void spk_postproc_get_diag(spk_postproc_diag_t *out);
+void spk_postproc_set_volume_percent(uint16_t percent);
+uint16_t spk_postproc_get_volume_percent(void);

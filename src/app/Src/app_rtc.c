@@ -3,6 +3,7 @@
 #include <zephyr/sys/util.h>
 #include <zephyr/sys/byteorder.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <arm_math.h>
 
@@ -544,6 +545,25 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
 {
     if (len <= 0 || buf == NULL) {
         return false;
+    }
+    if (len >= 12 && memcmp(buf, "APP_SPK_VOL:", 12) == 0) {
+        char tmp[5] = {0};
+        int n = len - 12;
+        if (n > 3) {
+            n = 3;
+        }
+        if (n > 0) {
+            memcpy(tmp, buf + 12, (size_t)n);
+            int vol = atoi(tmp);
+            if (vol < 0) {
+                vol = 0;
+            } else if (vol > 500) {
+                vol = 500;
+            }
+            spk_postproc_set_volume_percent((uint16_t)vol);
+            LOG_INF("CTRL APP_SPK_VOL=%d", vol);
+            return true;
+        }
     }
     if (len >= 14 && memcmp(buf, "APP_PLAY_START", 14) == 0) {
         LOG_INF("CTRL APP_PLAY_START");

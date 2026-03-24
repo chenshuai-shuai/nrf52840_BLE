@@ -19,13 +19,14 @@
 
 #define SPK_PP_EXP_THRESHOLD 0.018f
 #define SPK_PP_EXP_FLOOR     0.30f
-#define SPK_PP_OUT_GAIN      0.44f
 #define SPK_PP_COMP_THRESH   0.68f
 #define SPK_PP_COMP_RATIO    3.0f
-#define SPK_PP_LIMIT         0.88f
+#define SPK_PP_LIMIT         0.95f
 #define SPK_PP_HP_R          0.994f
 #define SPK_PP_GATE_TH       0.0035f
 #define SPK_PP_GATE_FLOOR    0.90f
+#define SPK_PP_VOLUME_DEFAULT 420U
+#define SPK_PP_VOLUME_MAX_GAIN 1.32f
 
 static const float32_t g_spk_pp_notch_coeffs[10] = {
     1.0f, -1.99961448f, 1.0f, 1.98961641f, -0.99002500f,
@@ -63,6 +64,7 @@ static int16_t g_spk_pp_tmp8_i16[SPK_PP_IN_8K_SAMPLES];
 static int16_t g_spk_pp_tmp16_i16[SPK_PP_OUT_16K_SAMPLES];
 static SpeexResamplerState *g_spk_pp_resampler;
 static bool g_spk_pp_ready;
+static uint16_t g_spk_pp_volume_percent = SPK_PP_VOLUME_DEFAULT;
 static float32_t g_spk_pp_exp_env;
 static float32_t g_spk_pp_comp_env;
 static uint32_t g_spk_pp_fade_in_left;
@@ -90,6 +92,18 @@ static struct {
 static inline float32_t spk_pp_absf(float32_t x)
 {
     return x >= 0.0f ? x : -x;
+}
+
+static float32_t spk_pp_output_gain(void)
+{
+    float32_t norm = (float32_t)g_spk_pp_volume_percent / 100.0f;
+    if (norm <= 0.0f) {
+        return 0.0f;
+    }
+    if (norm > 5.0f) {
+        norm = 5.0f;
+    }
+    return SPK_PP_VOLUME_MAX_GAIN * sqrtf(norm);
 }
 
 static void spk_pp_process_8k_cleanup(float32_t *pcm, size_t samples)
@@ -121,7 +135,7 @@ static void spk_pp_process_16k_output(float32_t *pcm, size_t samples, bool fade_
         g_spk_pp_hp_y1 = hp;
         float32_t low = in - hp;
 
-        float32_t y = hp * SPK_PP_OUT_GAIN;
+        float32_t y = hp * spk_pp_output_gain();
         float32_t gate_gain = 1.0f;
         float32_t comp_gain = 1.0f;
         float32_t ay = spk_pp_absf(y);
@@ -239,6 +253,19 @@ void spk_postproc_reset(void)
         speex_resampler_reset_mem(g_spk_pp_resampler);
         speex_resampler_skip_zeros(g_spk_pp_resampler);
     }
+}
+
+void spk_postproc_set_volume_percent(uint16_t percent)
+{
+    if (percent > 500U) {
+        percent = 500U;
+    }
+    g_spk_pp_volume_percent = percent;
+}
+
+uint16_t spk_postproc_get_volume_percent(void)
+{
+    return g_spk_pp_volume_percent;
 }
 
 int spk_postproc_process_frame(const int16_t *in_pcm,
