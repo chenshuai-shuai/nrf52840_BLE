@@ -215,8 +215,8 @@ static void mic_dsp_process(int16_t *pcm, size_t samples)
 #define SPK_FRAME_BYTES (SPK_FRAME_SAMPLES * sizeof(int16_t))
 #define SPK_ENC_FRAME_MAX 88U
 #define SPK_RING_FRAMES 512U               /* ~51 KB for ADPCM frames */
-#define SPK_HIGH_WATER_FRAMES 24U          /* ~240 ms */
-#define SPK_LOW_WATER_FRAMES 8U            /* ~80 ms */
+#define SPK_HIGH_WATER_FRAMES 40U          /* ~400 ms */
+#define SPK_LOW_WATER_FRAMES 16U           /* ~160 ms */
 #define SPK_STREAM_RATE_MIN_PM 980U        /* ~0.98x realtime */
 #define SPK_FORCE_START_FRAMES 96U         /* ~960 ms backlog */
 #define SPK_FORCE_START_WAIT_MS 700U
@@ -800,10 +800,14 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
     bool stream_mode = false;
     bool have_last_pcm = false;
     uint32_t gap_fill_frames = 0U;
+    uint32_t session_audio_frames = 0U;
+    uint32_t session_gap_fill_total = 0U;
+    uint32_t session_silence_fill_total = 0U;
     static uint8_t enc_frame[SPK_ENC_FRAME_MAX];
     static int16_t pcm_frame[SPK_FRAME_SAMPLES];
     static int16_t last_pcm[SPK_FRAME_SAMPLES];
     static const uint8_t silence_frame[SPK_FRAME_BYTES] = {0};
+    spk_postproc_diag_t spk_diag;
 
     while (1) {
         if (!spk_running) {
@@ -839,6 +843,9 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
                 g_spk_t_start_ms = k_uptime_get();
             }
             spk_postproc_reset();
+            session_audio_frames = 0U;
+            session_gap_fill_total = 0U;
+            session_silence_fill_total = 0U;
             spk_running = true;
         }
 
@@ -870,15 +877,18 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
                         memcpy(last_pcm, g_spk_play_buf + out_len, pcm_bytes);
                         have_last_pcm = true;
                         gap_fill_frames = 0U;
+                        session_audio_frames += (uint32_t)(pcm_bytes / SPK_FRAME_BYTES);
                         out_len += pcm_bytes;
                     } else {
                         memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
                         gap_fill_frames = 0U;
+                        session_silence_fill_total++;
                         out_len += SPK_FRAME_BYTES;
                     }
                 } else {
                     memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
                     gap_fill_frames = 0U;
+                    session_silence_fill_total++;
                     out_len += SPK_FRAME_BYTES;
                 }
             } else if (spk_is_eos_received()) {
@@ -891,15 +901,18 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
                 if (plc_bytes > 0U) {
                     out_len += plc_bytes;
                     gap_fill_frames++;
+                    session_gap_fill_total++;
                 } else {
                     memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
                     have_last_pcm = false;
                     gap_fill_frames = 0U;
+                    session_silence_fill_total++;
                     out_len += SPK_FRAME_BYTES;
                 }
             } else {
                 memcpy(g_spk_play_buf + out_len, silence_frame, SPK_FRAME_BYTES);
                 gap_fill_frames = 0U;
+                session_silence_fill_total++;
                 out_len += SPK_FRAME_BYTES;
             }
         }
@@ -922,10 +935,23 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
         int64_t now = k_uptime_get();
         if (now - last_log >= 1000) {
             last_log = now;
-            LOG_INF("SPK PLAY frames=%u errs=%u q=%u mode=%s",
+            spk_postproc_get_diag(&spk_diag);
+            LOG_INF("SPK PLAY frames=%u errs=%u q=%u mode=%s aud=%u gap=%u sil=%u in_rms=%u out_rms=%u act_rms=%u idle_rms=%u lowcut=%upm gate=%upm comp=%upm clip=%upm dc=%d",
                     g_spk_play_frames, g_spk_play_errs,
                     (unsigned)spk_ring_count(),
-                    clip_mode ? "clip" : (stream_mode ? "stream" : "fill"));
+                    clip_mode ? "clip" : (stream_mode ? "stream" : "fill"),
+                    (unsigned)session_audio_frames,
+                    (unsigned)session_gap_fill_total,
+                    (unsigned)session_silence_fill_total,
+                    (unsigned)spk_diag.in_rms,
+                    (unsigned)spk_diag.out_rms,
+                    (unsigned)spk_diag.active_rms,
+                    (unsigned)spk_diag.idle_rms,
+                    (unsigned)spk_diag.low_removed_pm,
+                    (unsigned)spk_diag.gate_attn_pm,
+                    (unsigned)spk_diag.comp_attn_pm,
+                    (unsigned)spk_diag.clip_pm,
+                    (int)spk_diag.dc_out);
         }
 
         if (g_spk_buf_full) {

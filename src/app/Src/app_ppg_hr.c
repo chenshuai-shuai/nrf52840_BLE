@@ -280,6 +280,11 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
     ppg_hr_set_state(APP_PPG_HR_ST_LOCKING);
 
     while (1) {
+        if (g_ppg_hr_paused) {
+            k_msleep(20);
+            continue;
+        }
+
         hal_ppg_sample_t sample;
         int ret = hal_ppg_read(&sample, sizeof(sample), 2000);
         if (ret == HAL_OK) {
@@ -618,7 +623,7 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                         (unsigned int)timeout_cnt);
                 last_timeout_log_ms = now_ms;
             }
-        } else {
+        } else if (!g_ppg_hr_paused) {
             LOG_WRN("ppg hr: read error=%d", ret);
         }
     }
@@ -671,9 +676,8 @@ void app_ppg_hr_pause(void)
     if (!g_ppg_hr_started || g_ppg_hr_paused) {
         return;
     }
-    (void)hal_ppg_stop();
-    k_thread_suspend(&g_ppg_hr_thread);
     g_ppg_hr_paused = true;
+    (void)hal_ppg_stop();
 }
 
 void app_ppg_hr_resume(void)
@@ -682,7 +686,6 @@ void app_ppg_hr_resume(void)
         return;
     }
     (void)hal_ppg_start();
-    k_thread_resume(&g_ppg_hr_thread);
     g_ppg_hr_paused = false;
 }
 
