@@ -1008,12 +1008,23 @@ static void mic_level_entry(void *p1, void *p2, void *p3)
 
     LOG_INF("MIC level test started");
 
+    uint64_t last_log = k_uptime_get();
     uint32_t frames = 0;
+#if defined(CONFIG_MIC_LEVEL_STEREO_TEST)
     int32_t peak_l = 0;
     int32_t peak_r = 0;
+    int64_t sum_l = 0;
+    int64_t sum_r = 0;
     uint64_t sum_sq_l = 0;
     uint64_t sum_sq_r = 0;
+#else
+    int32_t peak = 0;
+    int64_t sum = 0;
+    uint64_t sum_sq = 0;
+#endif
     uint32_t sample_cnt = 0;
+    int16_t first_samples[6] = {0};
+    bool first_samples_valid = false;
 
     while (1) {
         void *buf = NULL;
@@ -1022,42 +1033,116 @@ static void mic_level_entry(void *p1, void *p2, void *p3)
         if (r == HAL_OK && buf != NULL && len > 0) {
             int16_t *pcm = (int16_t *)buf;
             size_t samples = len / sizeof(int16_t);
-            for (size_t i = 0; i + 1 < samples; i += 2) {
-                int32_t l = pcm[i];
-                int32_t r = pcm[i + 1];
-                int32_t al = l < 0 ? -l : l;
-                int32_t ar = r < 0 ? -r : r;
-                if (al > peak_l) {
-                    peak_l = al;
+            if (!first_samples_valid) {
+                for (size_t i = 0; i < ARRAY_SIZE(first_samples); i++) {
+                    first_samples[i] = (i < samples) ? pcm[i] : 0;
                 }
-                if (ar > peak_r) {
-                    peak_r = ar;
+                first_samples_valid = true;
+            }
+#if defined(CONFIG_MIC_LEVEL_STEREO_TEST)
+            for (size_t i = 0; i + 1U < samples; i += 2U) {
+                int32_t vl = pcm[i];
+                int32_t vr = pcm[i + 1U];
+                int32_t avl = (vl < 0) ? -vl : vl;
+                int32_t avr = (vr < 0) ? -vr : vr;
+                if (avl > peak_l) {
+                    peak_l = avl;
                 }
-                sum_sq_l += (uint64_t)(l * (int64_t)l);
-                sum_sq_r += (uint64_t)(r * (int64_t)r);
+                if (avr > peak_r) {
+                    peak_r = avr;
+                }
+                sum_l += vl;
+                sum_r += vr;
+                sum_sq_l += (uint64_t)(vl * (int64_t)vl);
+                sum_sq_r += (uint64_t)(vr * (int64_t)vr);
             }
             sample_cnt += (uint32_t)(samples / 2U);
+#else
+            for (size_t i = 0; i < samples; i++) {
+                int32_t v = pcm[i];
+                int32_t av = (v < 0) ? -v : v;
+                if (av > peak) {
+                    peak = av;
+                }
+                sum += v;
+                sum_sq += (uint64_t)(v * (int64_t)v);
+            }
+            sample_cnt += (uint32_t)samples;
+#endif
             frames++;
             (void)hal_mic_release(buf);
         }
 
         uint64_t now = k_uptime_get();
         if (now - last_log >= 1000) {
+#if defined(CONFIG_MIC_LEVEL_STEREO_TEST)
             uint32_t rms_l = 0;
             uint32_t rms_r = 0;
+            int32_t mean_l = 0;
+            int32_t mean_r = 0;
             if (sample_cnt > 0) {
-                rms_l = (uint32_t)(sum_sq_l / sample_cnt);
-                rms_r = (uint32_t)(sum_sq_r / sample_cnt);
+                float32_t out_l = 0.0f;
+                float32_t out_r = 0.0f;
+                arm_sqrt_f32((float32_t)sum_sq_l / (float32_t)sample_cnt, &out_l);
+                arm_sqrt_f32((float32_t)sum_sq_r / (float32_t)sample_cnt, &out_r);
+                rms_l = (uint32_t)out_l;
+                rms_r = (uint32_t)out_r;
+                mean_l = (int32_t)(sum_l / (int64_t)sample_cnt);
+                mean_r = (int32_t)(sum_r / (int64_t)sample_cnt);
             }
-            LOG_INF("MIC level: frames=%u L_peak=%d L_rms=%u | R_peak=%d R_rms=%u",
-                    frames, (int)peak_l, rms_l, (int)peak_r, rms_r);
+            LOG_INF("MIC stereo: frames=%u samples/ch=%u L(peak=%d rms=%u mean=%d) R(peak=%d rms=%u mean=%d) first=[%d,%d,%d,%d,%d,%d]",
+                    frames,
+                    (unsigned int)sample_cnt,
+                    (int)peak_l,
+                    (unsigned int)rms_l,
+                    (int)mean_l,
+                    (int)peak_r,
+                    (unsigned int)rms_r,
+                    (int)mean_r,
+                    (int)first_samples[0],
+                    (int)first_samples[1],
+                    (int)first_samples[2],
+                    (int)first_samples[3],
+                    (int)first_samples[4],
+                    (int)first_samples[5]);
+#else
+            uint32_t rms = 0;
+            int32_t mean = 0;
+            if (sample_cnt > 0) {
+                float32_t out = 0.0f;
+                arm_sqrt_f32((float32_t)sum_sq / (float32_t)sample_cnt, &out);
+                rms = (uint32_t)out;
+                mean = (int32_t)(sum / (int64_t)sample_cnt);
+            }
+            LOG_INF("MIC mono: frames=%u samples=%u peak=%d rms=%u mean=%d first=[%d,%d,%d,%d,%d,%d]",
+                    frames,
+                    (unsigned int)sample_cnt,
+                    (int)peak,
+                    (unsigned int)rms,
+                    (int)mean,
+                    (int)first_samples[0],
+                    (int)first_samples[1],
+                    (int)first_samples[2],
+                    (int)first_samples[3],
+                    (int)first_samples[4],
+                    (int)first_samples[5]);
+#endif
             last_log = now;
+#if defined(CONFIG_MIC_LEVEL_STEREO_TEST)
             peak_l = 0;
             peak_r = 0;
+            sum_l = 0;
+            sum_r = 0;
             sum_sq_l = 0;
             sum_sq_r = 0;
+#else
+            peak = 0;
+            sum = 0;
+            sum_sq = 0;
+#endif
             sample_cnt = 0;
             frames = 0;
+            first_samples_valid = false;
         }
     }
 }

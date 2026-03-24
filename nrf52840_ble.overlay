@@ -130,7 +130,7 @@
     queue-size = <16>;
 
     /* 关键：先用内部高频时钟，绕开板上 HFXO 不稳定的问题 */
-    clock-source = "PCLK32M";
+    clock-source = "PCLK32M_HFXO";
 };
 
 &uart1 {

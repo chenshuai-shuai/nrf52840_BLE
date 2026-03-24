@@ -110,7 +110,7 @@
     pinctrl-1 = <&pdm0_sleep>;
     pinctrl-names = "default", "sleep";
     queue-size = <16>;
-    clock-source = "PCLK32M";
+    clock-source = "PCLK32M_HFXO";
 };
 
 &i2s0 {

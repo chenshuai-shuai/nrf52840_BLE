@@ -272,6 +272,58 @@ config MIC_LEVEL_TEST
 	help
 	  Log microphone level (RMS/peak) locally without BLE.
 
+config MIC_LEVEL_STEREO_TEST
+	bool "Enable stereo mic level diagnosis"
+	default n
+	depends on MIC_LEVEL_TEST
+	depends on HAL_MIC
+	depends on DRIVER_MIC_NRF
+	help
+	  Capture both PDM half-cycles during MIC_LEVEL_TEST and print
+	  separate left/right statistics. Leave disabled for normal single-mic
+	  bring-up.
+
+config MIC_PDM_CLK_POL
+	bool "Invert PDM clock polarity"
+	default n
+	depends on HAL_MIC
+	depends on DRIVER_MIC_NRF
+	help
+	  Set the PDM clock polarity field in the nRF DMIC driver.
+	  Useful for debugging microphones that appear to respond but with
+	  abnormally low amplitude.
+
+config MIC_PDM_DATA_POL
+	bool "Invert PDM data polarity"
+	default n
+	depends on HAL_MIC
+	depends on DRIVER_MIC_NRF
+	help
+	  Set the PDM data polarity field in the nRF DMIC driver.
+	  Useful for debugging microphones that appear to respond but with
+	  abnormally low amplitude.
+
+config MIC_PDM_CLK_SKEW
+	int "PDM clock skew setting"
+	range 0 255
+	default 0
+	depends on HAL_MIC
+	depends on DRIVER_MIC_NRF
+	help
+	  Set the PDM clock skew field in the nRF DMIC driver. Leave at 0 for
+	  the default timing, or change it during microphone bring-up to test
+	  whether sampling edge alignment affects captured amplitude.
+
+config MIC_PDM_USE_RIGHT
+	bool "Use right PDM channel for mono mic path"
+	default n
+	depends on HAL_MIC
+	depends on DRIVER_MIC_NRF
+	help
+	  In normal mono microphone mode, capture the right PDM half-cycle
+	  instead of the default left channel. This is useful when the board's
+	  active microphone is strapped to the right channel.
+
 config APP_RTC_ENABLE
 	bool "Enable realtime conversation service (app_rtc)"
 	default y

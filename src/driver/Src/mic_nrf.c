@@ -16,10 +16,14 @@ LOG_MODULE_REGISTER(mic_nrf, LOG_LEVEL_WRN);
 
 #define MIC_SAMPLE_RATE_HZ   16000U
 #define MIC_BITS_PER_SAMPLE  16U
+#if defined(CONFIG_MIC_LEVEL_STEREO_TEST)
+#define MIC_CHANNELS         2U
+#else
 #define MIC_CHANNELS         1U
+#endif
 #define MIC_FRAME_SAMPLES    160U /* 10ms @ 16kHz */
 
-#define MIC_MAX_BLOCK_SIZE   512U
+#define MIC_MAX_BLOCK_SIZE   1024U
 #define MIC_BLOCK_COUNT      16U
 
 K_MEM_SLAB_DEFINE_STATIC(mic_mem_slab, MIC_MAX_BLOCK_SIZE, MIC_BLOCK_COUNT, 4);
@@ -61,15 +65,25 @@ static int mic_nrf_init(void)
 
     memset(&g_mic.dmic_cfg, 0, sizeof(g_mic.dmic_cfg));
     g_mic.dmic_cfg.io.min_pdm_clk_freq = 1000000U;
-    g_mic.dmic_cfg.io.max_pdm_clk_freq = 3200000U;
+    g_mic.dmic_cfg.io.max_pdm_clk_freq = 3500000U;
     g_mic.dmic_cfg.io.min_pdm_clk_dc = 40U;
     g_mic.dmic_cfg.io.max_pdm_clk_dc = 60U;
+    g_mic.dmic_cfg.io.pdm_clk_pol = IS_ENABLED(CONFIG_MIC_PDM_CLK_POL) ? 1U : 0U;
+    g_mic.dmic_cfg.io.pdm_data_pol = IS_ENABLED(CONFIG_MIC_PDM_DATA_POL) ? 1U : 0U;
+    g_mic.dmic_cfg.io.pdm_clk_skew = (uint32_t)CONFIG_MIC_PDM_CLK_SKEW;
 
     g_mic.dmic_cfg.streams = &g_mic.stream_cfg;
     g_mic.dmic_cfg.channel.req_num_streams = 1U;
-    g_mic.dmic_cfg.channel.req_num_chan = 1U;
-    g_mic.dmic_cfg.channel.req_chan_map_lo =
-        dmic_build_channel_map(0U, 0U, PDM_CHAN_LEFT);
+    g_mic.dmic_cfg.channel.req_num_chan = MIC_CHANNELS;
+    if (MIC_CHANNELS == 1U) {
+        g_mic.dmic_cfg.channel.req_chan_map_lo =
+            dmic_build_channel_map(0U, 0U,
+                IS_ENABLED(CONFIG_MIC_PDM_USE_RIGHT) ? PDM_CHAN_RIGHT : PDM_CHAN_LEFT);
+    } else {
+        g_mic.dmic_cfg.channel.req_chan_map_lo =
+            dmic_build_channel_map(0U, 0U, PDM_CHAN_LEFT) |
+            dmic_build_channel_map(1U, 0U, PDM_CHAN_RIGHT);
+    }
     g_mic.dmic_cfg.channel.req_chan_map_hi = 0U;
 
     (void)dmic_trigger(g_mic.dev, DMIC_TRIGGER_STOP);
@@ -80,7 +94,15 @@ static int mic_nrf_init(void)
         return ret;
     }
 
-    LOG_INF("mic configured: block_size=%u", (unsigned)g_mic.block_size);
+    LOG_INF("mic configured: block_size=%u rate=%u bits=%u chan=%u mono_src=%s clk_pol=%u data_pol=%u clk_skew=%u",
+            (unsigned)g_mic.block_size,
+            (unsigned)MIC_SAMPLE_RATE_HZ,
+            (unsigned)MIC_BITS_PER_SAMPLE,
+            (unsigned)MIC_CHANNELS,
+            IS_ENABLED(CONFIG_MIC_PDM_USE_RIGHT) ? "right" : "left",
+            (unsigned)g_mic.dmic_cfg.io.pdm_clk_pol,
+            (unsigned)g_mic.dmic_cfg.io.pdm_data_pol,
+            (unsigned)g_mic.dmic_cfg.io.pdm_clk_skew);
     return HAL_OK;
 }
 
