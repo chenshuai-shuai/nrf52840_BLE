@@ -154,11 +154,20 @@ static void gps_app_entry(void *p1, void *p2, void *p3)
     uint32_t raw_cnt = 0;
 
     while (1) {
+        if (g_gps_paused) {
+            k_msleep(20);
+            continue;
+        }
+
         hal_gps_packet_t pkt;
         memset(&pkt, 0, sizeof(pkt));
 
         ret = hal_gps_read(&pkt, sizeof(pkt), GPS_LINE_TIMEOUT_MS);
         if (ret != HAL_OK) {
+            if (g_gps_paused) {
+                k_msleep(20);
+                continue;
+            }
             if (ret == HAL_EBUSY) {
                 continue;
             }
@@ -242,8 +251,11 @@ void app_gps_pause(void)
     if (!g_gps_started || g_gps_paused) {
         return;
     }
-    k_thread_suspend(&g_gps_thread);
     g_gps_paused = true;
+    int ret = hal_gps_stop();
+    if (ret != HAL_OK) {
+        LOG_WRN("gps app: hal_gps_stop failed: %d", ret);
+    }
 }
 
 void app_gps_resume(void)
@@ -251,7 +263,11 @@ void app_gps_resume(void)
     if (!g_gps_started || !g_gps_paused) {
         return;
     }
-    k_thread_resume(&g_gps_thread);
+    int ret = hal_gps_start();
+    if (ret != HAL_OK) {
+        LOG_WRN("gps app: hal_gps_start failed on resume: %d", ret);
+        return;
+    }
     g_gps_paused = false;
 }
 

@@ -221,6 +221,8 @@ static void mic_dsp_process(int16_t *pcm, size_t samples)
 #define SPK_STREAM_RATE_MIN_PM 980U        /* ~0.98x realtime */
 #define SPK_FORCE_START_FRAMES 96U         /* ~960 ms backlog */
 #define SPK_FORCE_START_WAIT_MS 700U
+#define SPK_NO_AUDIO_START_TIMEOUT_MS 5000U
+#define SPK_STREAM_STALL_TIMEOUT_MS 2000U
 
 struct spk_enc_slot {
     uint8_t len;
@@ -266,6 +268,7 @@ static int64_t g_spk_t_first_audio_ms = 0;
 static int64_t g_spk_t_start_ms = 0;
 static int64_t g_spk_t_eos_ms = 0;
 static int64_t g_spk_t_done_ms = 0;
+static int64_t g_spk_last_audio_ms = 0;
 
 static void mic_drop_queue(void);
 
@@ -381,6 +384,26 @@ static bool spk_is_eos_received(void)
     eos = g_spk_eos_received;
     k_mutex_unlock(&g_spk_ring_lock);
     return eos;
+}
+
+static void spk_finish_session(void)
+{
+    const char done[] = "PLAY_DONE";
+
+    g_spk_t_done_ms = k_uptime_get();
+    if (app_uplink_service_is_ready()) {
+        (void)app_uplink_publish(APP_DATA_PART_CTRL,
+                                 APP_UPLINK_PRIO_HIGH,
+                                 done,
+                                 sizeof(done) - 1,
+                                 (uint32_t)g_spk_t_done_ms);
+    }
+    if (!DOWNLINK_TEST) {
+        app_state_set(AUDIO_MODE_UPLOAD);
+    }
+    g_spk_accept_audio = false;
+    spk_ring_reset();
+    app_rtc_playback_critical_exit();
 }
 
 static uint32_t spk_rx_rate_permille(void)
@@ -573,6 +596,7 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
         g_spk_t_start_ms = 0;
         g_spk_t_eos_ms = 0;
         g_spk_t_done_ms = 0;
+        g_spk_last_audio_ms = 0;
         app_rtc_playback_critical_enter();
         g_spk_accept_audio = true;
         g_spk_buf_full = false;
@@ -587,6 +611,7 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
         g_nrf_ready_sent = false;
         g_spk_buf_full = false;
         g_spk_rx_reset = true;
+        g_spk_last_audio_ms = 0;
         spk_ring_reset();
         mic_drop_queue();
         if (app_uplink_service_is_ready()) {
@@ -763,6 +788,7 @@ static void spk_rx_entry(void *p1, void *p2, void *p3)
                         g_spk_rx_start_ms = k_uptime_get();
                     }
                     g_spk_rx_audio_frames++;
+                    g_spk_last_audio_ms = k_uptime_get();
                     size_t used = g_spk_ring_count;
                     if (!g_spk_buf_full && used >= (SPK_RING_FRAMES - 8U) &&
                         app_uplink_service_is_ready()) {
@@ -830,9 +856,46 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
     spk_postproc_diag_t spk_diag;
 
     while (1) {
+        int64_t now = k_uptime_get();
+        size_t used_now = spk_ring_count();
+        bool eos_now = spk_is_eos_received();
+        bool start_timed_out = g_spk_accept_audio &&
+                               !spk_running &&
+                               !eos_now &&
+                               g_spk_t_ctrl_ms > 0 &&
+                               g_spk_t_first_audio_ms == 0 &&
+                               ((uint32_t)(now - g_spk_t_ctrl_ms) >= SPK_NO_AUDIO_START_TIMEOUT_MS);
+        bool stream_stalled = g_playback_critical &&
+                              !eos_now &&
+                              used_now == 0U &&
+                              g_spk_last_audio_ms > 0 &&
+                              ((uint32_t)(now - g_spk_last_audio_ms) >= SPK_STREAM_STALL_TIMEOUT_MS);
+        if (start_timed_out || stream_stalled) {
+            LOG_WRN("SPK timeout abort: start_to=%d stall=%d ctrl=%lld first=%lld last=%lld q=%u",
+                    start_timed_out ? 1 : 0,
+                    stream_stalled ? 1 : 0,
+                    g_spk_t_ctrl_ms,
+                    g_spk_t_first_audio_ms,
+                    g_spk_last_audio_ms,
+                    (unsigned)used_now);
+            if (spk_running) {
+                (void)hal_spk_stop();
+                spk_running = false;
+            }
+            if (g_spk_t_eos_ms == 0) {
+                g_spk_t_eos_ms = now;
+            }
+            clip_mode = false;
+            stream_mode = false;
+            have_last_pcm = false;
+            gap_fill_frames = 0U;
+            spk_finish_session();
+            continue;
+        }
+
         if (!spk_running) {
-            size_t used = spk_ring_count();
-            bool eos = spk_is_eos_received();
+            size_t used = used_now;
+            bool eos = eos_now;
             if (used == 0U) {
                 k_sleep(K_MSEC(10));
                 continue;
@@ -952,7 +1015,6 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             spk_running = false;
         }
 
-        int64_t now = k_uptime_get();
         if (now - last_log >= 1000) {
             last_log = now;
             spk_postproc_get_diag(&spk_diag);
@@ -988,19 +1050,7 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
         }
 
         if (spk_is_eos_received() && spk_ring_count() == 0U && !spk_running) {
-            const char done[] = "PLAY_DONE";
-            g_spk_t_done_ms = k_uptime_get();
-            if (app_uplink_service_is_ready()) {
-                (void)app_uplink_publish(APP_DATA_PART_CTRL,
-                                         APP_UPLINK_PRIO_HIGH,
-                                         done,
-                                         sizeof(done) - 1,
-                                         (uint32_t)k_uptime_get());
-            }
-            if (!DOWNLINK_TEST) {
-                app_state_set(AUDIO_MODE_UPLOAD);
-            }
-            g_spk_accept_audio = false;
+            spk_finish_session();
             clip_mode = false;
             stream_mode = false;
             have_last_pcm = false;

@@ -5,7 +5,6 @@
 #include "hal_imu.h"
 #include "error.h"
 #include "rt_thread.h"
-#include "imu_algo.h"
 #include "app_uplink_service.h"
 
 LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_WRN);
@@ -13,16 +12,11 @@ LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_WRN);
 #define IMU_TEST_STACK_SIZE 2048
 #define IMU_TEST_PRIORITY   8
 
-#define IMU_ACCEL_LSB_PER_G 2048
-#define IMU_GYRO_LSB_PER_DPS_X10 164
 #define IMU_TEMP_LSB_PER_C_X100 13248
 
-#define IMU_CALIB_SAMPLES 200
 #define IMU_LOG_EVERY_N  200
-#define IMU_ACTION_LOG_EVERY_N 500
 #define IMU_RATE_LOG_PERIOD_MS 5000
 #define IMU_UPLINK_EVERY_N 20
-#define IMU_PROCESS_DECIM 4
 
 static struct k_thread g_imu_thread;
 RT_THREAD_STACK_DEFINE(g_imu_stack, IMU_TEST_STACK_SIZE);
@@ -42,49 +36,29 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         LOG_ERR("imu test: hal_imu_init failed: %d", ret);
         return;
     }
-
-    LOG_INF("imu test: start sampling (INT1, 100Hz)");
-    ret = imu_algo_init();
-    if (ret != HAL_OK) {
-        LOG_ERR("imu test: imu_algo_init failed: %d", ret);
-        return;
-    }
+    LOG_INF("imu test: start raw sampling uplink (INT1, 100Hz)");
 
     uint32_t sample_cnt = 0;
     uint32_t err_cnt = 0;
     uint32_t timeout_cnt = 0;
-    bool calib_done = false;
-    int64_t ax_bias = 0;
-    int64_t ay_bias = 0;
-    int64_t az_bias = 0;
-    int64_t gx_bias = 0;
-    int64_t gy_bias = 0;
-    int64_t gz_bias = 0;
-    int64_t ax_sum = 0;
-    int64_t ay_sum = 0;
-    int64_t az_sum = 0;
-    int64_t gx_sum = 0;
-    int64_t gy_sum = 0;
-    int64_t gz_sum = 0;
-
-    int32_t ax_f = 0;
-    int32_t ay_f = 0;
-    int32_t az_f = 0;
-    int32_t gx_f = 0;
-    int32_t gy_f = 0;
-    int32_t gz_f = 0;
     bool header_printed = false;
-    imu_action_t last_action = IMU_ACTION_UNKNOWN;
     int64_t rate_t0 = k_uptime_get();
     uint32_t rate_cnt = 0;
-    uint32_t action_cnt = 0;
-    int64_t last_action_log_ms = 0;
     int64_t last_raw_log_ms = 0;
 
     while (1) {
+        if (g_imu_paused) {
+            k_msleep(20);
+            continue;
+        }
+
         imu_sample_t s = {0};
         ret = hal_imu_read(&s, sizeof(s), 1000);
         if (ret != HAL_OK) {
+            if (g_imu_paused) {
+                k_msleep(20);
+                continue;
+            }
             if (ret == HAL_EBUSY) {
                 timeout_cnt++;
                 if ((timeout_cnt % 30U) == 0U) {
@@ -111,46 +85,6 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
             rate_t0 = now;
         }
 
-        if (!calib_done) {
-            ax_sum += s.accel_x;
-            ay_sum += s.accel_y;
-            az_sum += s.accel_z;
-            gx_sum += s.gyro_x;
-            gy_sum += s.gyro_y;
-            gz_sum += s.gyro_z;
-            if (sample_cnt >= IMU_CALIB_SAMPLES) {
-                ax_bias = ax_sum / IMU_CALIB_SAMPLES;
-                ay_bias = ay_sum / IMU_CALIB_SAMPLES;
-                az_bias = (az_sum / IMU_CALIB_SAMPLES) - IMU_ACCEL_LSB_PER_G;
-                gx_bias = gx_sum / IMU_CALIB_SAMPLES;
-                gy_bias = gy_sum / IMU_CALIB_SAMPLES;
-                gz_bias = gz_sum / IMU_CALIB_SAMPLES;
-                calib_done = true;
-                LOG_INF("imu calib done: abias(%lld,%lld,%lld) gbias(%lld,%lld,%lld)",
-                        ax_bias, ay_bias, az_bias, gx_bias, gy_bias, gz_bias);
-            }
-            continue;
-        }
-
-        if ((sample_cnt % IMU_PROCESS_DECIM) != 0U) {
-            k_yield();
-            continue;
-        }
-
-        int32_t ax = (int32_t)(s.accel_x - ax_bias);
-        int32_t ay = (int32_t)(s.accel_y - ay_bias);
-        int32_t az = (int32_t)(s.accel_z - az_bias);
-        int32_t gx = (int32_t)(s.gyro_x - gx_bias);
-        int32_t gy = (int32_t)(s.gyro_y - gy_bias);
-        int32_t gz = (int32_t)(s.gyro_z - gz_bias);
-
-        ax_f = (ax_f * 3 + ax) / 4;
-        ay_f = (ay_f * 3 + ay) / 4;
-        az_f = (az_f * 3 + az) / 4;
-        gx_f = (gx_f * 3 + gx) / 4;
-        gy_f = (gy_f * 3 + gy) / 4;
-        gz_f = (gz_f * 3 + gz) / 4;
-
         int32_t t_centi = (int32_t)s.temp * 10000 / IMU_TEMP_LSB_PER_C_X100 + 2500;
         int32_t t_int = t_centi / 100;
         int32_t t_abs = (t_centi >= 0) ? t_centi : -t_centi;
@@ -173,100 +107,46 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
 #endif
         }
 
-        imu_algo_input_t algo_in = {
-            .accel_x_lsb = ax_f,
-            .accel_y_lsb = ay_f,
-            .accel_z_lsb = az_f,
-            .gyro_x_lsb = gx_f,
-            .gyro_y_lsb = gy_f,
-            .gyro_z_lsb = gz_f,
-            .temp_centi_deg = t_centi,
-            .timestamp_ms = (uint32_t)k_uptime_get(),
-            .dt_ms = (10U * IMU_PROCESS_DECIM),
-        };
-        imu_algo_output_t algo_out = {0};
-        ret = imu_algo_process(&algo_in, &algo_out);
-        if (ret == HAL_OK && algo_out.valid) {
-            action_cnt++;
-            int64_t act_now = k_uptime_get();
-            bool action_changed = (algo_out.action != last_action);
-            bool periodic_log = ((action_cnt % IMU_ACTION_LOG_EVERY_N) == 0U);
-            bool changed_log_allowed = action_changed &&
-                                       ((act_now - last_action_log_ms) >= 5000);
-            if (periodic_log || changed_log_allowed) {
-#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
-                LOG_INF("imu_action,seq=%u,action=%s,conf=%u",
-                        sample_cnt,
-                        imu_action_name(algo_out.action),
-                        algo_out.confidence);
-#endif
-                last_action = algo_out.action;
-                last_action_log_ms = act_now;
-            }
-
-            if (action_changed || ((sample_cnt % IMU_UPLINK_EVERY_N) == 0U)) {
-                struct __packed {
-                    uint8_t ver;
-                    uint8_t type;
-                    uint16_t seq;
-                    uint8_t action;
-                    uint8_t conf;
-                    uint32_t ts_ms;
-                } imu_pkt = {
-                    .ver = 1,
-                    .type = 2,
-                    .seq = (uint16_t)(sample_cnt & 0xFFFFU),
-                    .action = (uint8_t)algo_out.action,
-                    .conf = algo_out.confidence,
-                    .ts_ms = (uint32_t)act_now,
-                };
-                (void)app_uplink_publish(APP_DATA_PART_IMU,
-                                         APP_UPLINK_PRIO_LOW,
-                                         &imu_pkt,
-                                         sizeof(imu_pkt),
-                                         imu_pkt.ts_ms);
-            }
-
-            if ((sample_cnt % IMU_UPLINK_EVERY_N) == 0U &&
-                app_uplink_service_is_ready()) {
-                struct __packed {
-                    uint8_t ver;
-                    uint8_t type;
-                    uint16_t seq;
-                    int16_t ax;
-                    int16_t ay;
-                    int16_t az;
-                    int16_t gx;
-                    int16_t gy;
-                    int16_t gz;
-                    int16_t temp;
-                    uint32_t ts_ms;
-                } imu_raw_pkt = {
-                    .ver = 1,
-                    .type = 3, /* raw 6-axis + temp */
-                    .seq = (uint16_t)(sample_cnt & 0xFFFFU),
-                    .ax = s.accel_x,
-                    .ay = s.accel_y,
-                    .az = s.accel_z,
-                    .gx = s.gyro_x,
-                    .gy = s.gyro_y,
-                    .gz = s.gyro_z,
-                    .temp = s.temp,
-                    .ts_ms = (uint32_t)act_now,
-                };
-                (void)app_uplink_publish(APP_DATA_PART_IMU,
-                                         APP_UPLINK_PRIO_LOW,
-                                         &imu_raw_pkt,
-                                         sizeof(imu_raw_pkt),
-                                         imu_raw_pkt.ts_ms);
-                if ((act_now - last_raw_log_ms) >= 1000) {
-                    last_raw_log_ms = act_now;
-                    LOG_INF("imu_raw uplink: seq=%u ax=%d ay=%d az=%d gx=%d gy=%d gz=%d temp=%d",
-                            (unsigned)imu_raw_pkt.seq,
-                            imu_raw_pkt.ax, imu_raw_pkt.ay, imu_raw_pkt.az,
-                            imu_raw_pkt.gx, imu_raw_pkt.gy, imu_raw_pkt.gz,
-                            imu_raw_pkt.temp);
-                }
+        if ((sample_cnt % IMU_UPLINK_EVERY_N) == 0U &&
+            app_uplink_service_is_ready()) {
+            int64_t up_now = k_uptime_get();
+            struct __packed {
+                uint8_t ver;
+                uint8_t type;
+                uint16_t seq;
+                int16_t ax;
+                int16_t ay;
+                int16_t az;
+                int16_t gx;
+                int16_t gy;
+                int16_t gz;
+                int16_t temp;
+                uint32_t ts_ms;
+            } imu_raw_pkt = {
+                .ver = 1,
+                .type = 3, /* raw 6-axis + temp */
+                .seq = (uint16_t)(sample_cnt & 0xFFFFU),
+                .ax = s.accel_x,
+                .ay = s.accel_y,
+                .az = s.accel_z,
+                .gx = s.gyro_x,
+                .gy = s.gyro_y,
+                .gz = s.gyro_z,
+                .temp = s.temp,
+                .ts_ms = (uint32_t)up_now,
+            };
+            (void)app_uplink_publish(APP_DATA_PART_IMU,
+                                     APP_UPLINK_PRIO_LOW,
+                                     &imu_raw_pkt,
+                                     sizeof(imu_raw_pkt),
+                                     imu_raw_pkt.ts_ms);
+            if ((up_now - last_raw_log_ms) >= 1000) {
+                last_raw_log_ms = up_now;
+                LOG_INF("imu_raw uplink: seq=%u ax=%d ay=%d az=%d gx=%d gy=%d gz=%d temp=%d",
+                        (unsigned)imu_raw_pkt.seq,
+                        imu_raw_pkt.ax, imu_raw_pkt.ay, imu_raw_pkt.az,
+                        imu_raw_pkt.gx, imu_raw_pkt.gy, imu_raw_pkt.gz,
+                        imu_raw_pkt.temp);
             }
         }
         k_yield();
@@ -299,7 +179,6 @@ void app_imu_test_pause(void)
     if (!g_imu_started || g_imu_paused) {
         return;
     }
-    k_thread_suspend(&g_imu_thread);
     g_imu_paused = true;
 }
 
@@ -308,6 +187,5 @@ void app_imu_test_resume(void)
     if (!g_imu_started || !g_imu_paused) {
         return;
     }
-    k_thread_resume(&g_imu_thread);
     g_imu_paused = false;
 }
