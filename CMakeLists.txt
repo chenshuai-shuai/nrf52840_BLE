@@ -4,6 +4,18 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(nrf52840_BLE)
 
+if(CONFIG_FP_HARDABI)
+  set(GH3X2X_DRV_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/drv_lib/gcc_M4_hard/_build/gcc_hard)
+  set(GH3X2X_ALGO_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/algo_lib/M4_gcc_hard)
+  set(GH3X2X_DRV_SUFFIX gcc_hard)
+  set(GH3X2X_ALGO_SUFFIX gcc-hard)
+else()
+  set(GH3X2X_DRV_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/drv_lib/gcc_M4_softfp/_build/gcc_softfp)
+  set(GH3X2X_ALGO_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/algo_lib/M4_gcc_softfp)
+  set(GH3X2X_DRV_SUFFIX gcc_softfp)
+  set(GH3X2X_ALGO_SUFFIX gcc_softfp)
+endif()
+
 set(APP_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/main.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_bus.c
@@ -184,6 +196,8 @@ target_include_directories(app PRIVATE
   ${CMAKE_CURRENT_SOURCE_DIR}/src/hal/Inc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/Inc
   ${CMAKE_CURRENT_SOURCE_DIR}/src/common/Inc
+  ${CMAKE_CURRENT_SOURCE_DIR}/_tdk_tmp/sources/Invn/LibAGM
+  ${CMAKE_CURRENT_SOURCE_DIR}/_tdk_tmp/sources
   ${CMAKE_CURRENT_SOURCE_DIR}/Android_nRF_BLE/third_party/speexdsp/include/speex
   ${CMAKE_CURRENT_SOURCE_DIR}/Android_nRF_BLE/third_party/speexdsp/libspeexdsp
 )
@@ -215,20 +229,26 @@ if(CONFIG_DRIVER_PPG_NRF)
   )
 
   target_link_libraries(app PRIVATE
-    -L${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/drv_lib/gcc_M4_softfp/_build/gcc_softfp
-    -L${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/algo_lib/M4_gcc_softfp
+    -L${GH3X2X_DRV_LIB_DIR}
+    -L${GH3X2X_ALGO_LIB_DIR}
     -Wl,--start-group
-    libgh3x2x_drv_cortexM4l_band_gcc_softfp_agc.a
-    libgh3x2x_drv_cortexM4l_band_gcc_softfp_ecg.a
-    libgh3x2x_drv_cortexM4l_band_gcc_softfp_kernel.a
-    libgh3x2x_drv_cortexM4l_band_gcc_softfp_zip.a
-    libcortexM4_eabi-gcc_softfp_bt.a
-    libcortexM4_eabi-gcc_softfp_ecg.a
-    libcortexM4_eabi-gcc_softfp_hr.a
-    libcortexM4_eabi-gcc_softfp_hrv.a
-    libcortexM4_eabi-gcc_softfp_nadt.a
-    libcortexM4_eabi-gcc_softfp_spo2.a
-    libcortexM4_eabi-gcc_softfp_common.a
+    libgh3x2x_drv_cortexM4l_band_${GH3X2X_DRV_SUFFIX}_agc.a
+    libgh3x2x_drv_cortexM4l_band_${GH3X2X_DRV_SUFFIX}_ecg.a
+    libgh3x2x_drv_cortexM4l_band_${GH3X2X_DRV_SUFFIX}_kernel.a
+    libgh3x2x_drv_cortexM4l_band_${GH3X2X_DRV_SUFFIX}_zip.a
+    libcortexM4_eabi-${GH3X2X_ALGO_SUFFIX}_bt.a
+    libcortexM4_eabi-${GH3X2X_ALGO_SUFFIX}_ecg.a
+    libcortexM4_eabi-${GH3X2X_ALGO_SUFFIX}_hr.a
+    libcortexM4_eabi-${GH3X2X_ALGO_SUFFIX}_hrv.a
+    libcortexM4_eabi-${GH3X2X_ALGO_SUFFIX}_nadt.a
+    libcortexM4_eabi-${GH3X2X_ALGO_SUFFIX}_spo2.a
+    libcortexM4_eabi-${GH3X2X_ALGO_SUFFIX}_common.a
     -Wl,--end-group
+  )
+endif()
+
+if(CONFIG_IMU_TDK_AGM)
+  target_link_libraries(app PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/_tdk_tmp/prebuilt/lib/libInvnAlgoAGM.a
   )
 endif()

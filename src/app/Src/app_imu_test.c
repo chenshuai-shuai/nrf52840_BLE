@@ -1,14 +1,17 @@
 #include <math.h>
+#include <string.h>
 
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/settings/settings.h>
 #include <zephyr/sys/util.h>
 
 #include "app_imu_test.h"
-#include "hal_imu.h"
-#include "error.h"
-#include "rt_thread.h"
 #include "app_uplink_service.h"
+#include "error.h"
+#include "hal_imu.h"
+#include "invn_algo_agm.h"
+#include "rt_thread.h"
 
 LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_WRN);
 
@@ -25,264 +28,217 @@ LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_WRN);
 #define IMU_GYRO_LSB_PER_DPS 16.4f
 #define IMU_GYRO_MOVE_SUM_DPS 4.5f
 #define IMU_ACC_NORM_MOVING_G 0.12f
-#define IMU_BIAS_SAMPLES_REQUIRED 80U
-#define IMU_FUSION_BETA 0.12f
-#define IMU_PI 3.14159265358979323846f
+
+#define IMU_ACC_FSR_G        16
+#define IMU_GYRO_FSR_DPS     2000
+#define IMU_ODR_US           10000U
+#define IMU_TEMP_OFFSET_Q16  (25 << 16)
+#define IMU_TEMP_SENS_Q30    ((int32_t)(((int64_t)100 << 30) / IMU_TEMP_LSB_PER_C_X100))
 
 #define IMU_ATT_FLAG_VALID      BIT(0)
 #define IMU_ATT_FLAG_MOVING     BIT(1)
 #define IMU_ATT_FLAG_BIAS_READY BIT(2)
 
+#define IMU_SETTINGS_KEY "agm_bias"
+#define IMU_SETTINGS_PATH "imu/agm_bias"
+#define IMU_BIAS_BLOB_VERSION 1U
+#define IMU_BIAS_SAVE_MIN_INTERVAL_MS 30000U
+
 typedef struct {
-    float w;
-    float x;
-    float y;
-    float z;
-} imu_quat_t;
+    uint8_t version;
+    int8_t acc_accuracy;
+    int8_t gyr_accuracy;
+    int8_t mag_accuracy;
+    int32_t acc_bias_q16[3];
+    int32_t gyr_bias_q16[3];
+    int32_t mag_bias_q16[3];
+} imu_agm_bias_blob_t;
 
 typedef struct {
     bool inited;
-    bool bias_ready;
-    imu_quat_t q;
-    uint32_t bias_count;
-    float gyro_bias_dps[3];
-    float gyro_bias_accum[3];
-    uint32_t last_ts_ms;
-} imu_fusion_state_t;
+    bool has_solution;
+    bool settings_loaded;
+    bool bias_restored;
+    bool bias_save_valid;
+    InvnAlgoAGMInput input;
+    InvnAlgoAGMOutput output;
+    int32_t acc_bias_q16[3];
+    int32_t gyr_bias_q16[3];
+    int32_t mag_bias_q16[3];
+    imu_agm_bias_blob_t saved_bias_blob;
+    uint32_t last_bias_save_ms;
+} imu_agm_state_t;
 
 static struct k_thread g_imu_thread;
 RT_THREAD_STACK_DEFINE(g_imu_stack, IMU_TEST_STACK_SIZE);
 static bool g_imu_started;
 static bool g_imu_paused;
 #if IS_ENABLED(CONFIG_IMU_TDK_AGM)
-static imu_fusion_state_t g_fusion;
+static imu_agm_state_t g_agm;
+
+static int imu_settings_set(const char *key, size_t len, settings_read_cb read_cb, void *cb_arg)
+{
+    imu_agm_bias_blob_t blob;
+    int rc;
+
+    if (settings_name_steq(key, IMU_SETTINGS_KEY, NULL) == 0) {
+        return -ENOENT;
+    }
+    if (len != sizeof(blob)) {
+        return -EINVAL;
+    }
+
+    rc = (int)read_cb(cb_arg, &blob, sizeof(blob));
+    if (rc < 0) {
+        return rc;
+    }
+    if (rc != sizeof(blob) || blob.version != IMU_BIAS_BLOB_VERSION) {
+        return -EINVAL;
+    }
+
+    g_agm.saved_bias_blob = blob;
+    g_agm.settings_loaded = true;
+    return 0;
+}
+
+SETTINGS_STATIC_HANDLER_DEFINE(imu_agm, "imu", NULL, imu_settings_set, NULL, NULL);
 #endif
 
 #if IS_ENABLED(CONFIG_IMU_TDK_AGM)
-static float imu_absf(float v)
+static void imu_agm_restore_biases(void)
 {
-    return (v >= 0.0f) ? v : -v;
-}
-
-static void imu_quat_normalize(imu_quat_t *q)
-{
-    float norm = sqrtf(q->w * q->w + q->x * q->x + q->y * q->y + q->z * q->z);
-    if (norm <= 0.0f) {
-        q->w = 1.0f;
-        q->x = 0.0f;
-        q->y = 0.0f;
-        q->z = 0.0f;
+    if (!g_agm.settings_loaded || g_agm.saved_bias_blob.version != IMU_BIAS_BLOB_VERSION) {
         return;
     }
 
-    q->w /= norm;
-    q->x /= norm;
-    q->y /= norm;
-    q->z /= norm;
+    memcpy(g_agm.acc_bias_q16, g_agm.saved_bias_blob.acc_bias_q16, sizeof(g_agm.acc_bias_q16));
+    memcpy(g_agm.gyr_bias_q16, g_agm.saved_bias_blob.gyr_bias_q16, sizeof(g_agm.gyr_bias_q16));
+    memcpy(g_agm.mag_bias_q16, g_agm.saved_bias_blob.mag_bias_q16, sizeof(g_agm.mag_bias_q16));
+    g_agm.bias_restored = true;
+    g_agm.bias_save_valid = true;
 }
 
-static void imu_fusion_init(void)
+static void imu_agm_maybe_save_biases(uint32_t ts_ms)
 {
-    memset(&g_fusion, 0, sizeof(g_fusion));
-    g_fusion.q.w = 1.0f;
-    g_fusion.inited = true;
+    imu_agm_bias_blob_t blob;
+
+    if (!g_agm.inited) {
+        return;
+    }
+    if (g_agm.output.gyr_accuracy_flag < 2 && g_agm.output.acc_accuracy_flag < 2) {
+        return;
+    }
+    if ((ts_ms - g_agm.last_bias_save_ms) < IMU_BIAS_SAVE_MIN_INTERVAL_MS) {
+        return;
+    }
+
+    memset(&blob, 0, sizeof(blob));
+    blob.version = IMU_BIAS_BLOB_VERSION;
+    blob.acc_accuracy = g_agm.output.acc_accuracy_flag;
+    blob.gyr_accuracy = g_agm.output.gyr_accuracy_flag;
+    blob.mag_accuracy = g_agm.output.mag_accuracy_flag;
+    memcpy(blob.acc_bias_q16, g_agm.output.acc_bias_q16, sizeof(blob.acc_bias_q16));
+    memcpy(blob.gyr_bias_q16, g_agm.output.gyr_bias_q16, sizeof(blob.gyr_bias_q16));
+    memcpy(blob.mag_bias_q16, g_agm.output.mag_bias_q16, sizeof(blob.mag_bias_q16));
+
+    if (g_agm.bias_save_valid &&
+        memcmp(&g_agm.saved_bias_blob, &blob, sizeof(blob)) == 0) {
+        g_agm.last_bias_save_ms = ts_ms;
+        return;
+    }
+
+    if (settings_save_one(IMU_SETTINGS_PATH, &blob, sizeof(blob)) == 0) {
+        g_agm.saved_bias_blob = blob;
+        g_agm.bias_save_valid = true;
+        g_agm.last_bias_save_ms = ts_ms;
+        LOG_INF("imu test: AGM bias saved acc=%d gyr=%d mag=%d",
+                (int)blob.acc_accuracy, (int)blob.gyr_accuracy, (int)blob.mag_accuracy);
+    }
 }
 
-static bool imu_fusion_is_moving(float ax_g, float ay_g, float az_g,
-                                 float gx_dps, float gy_dps, float gz_dps)
+static bool imu_sample_is_moving(const imu_sample_t *s)
 {
-    float gyro_sum = imu_absf(gx_dps) + imu_absf(gy_dps) + imu_absf(gz_dps);
+    float ax_g = (float)s->accel_x / IMU_ACC_LSB_PER_G;
+    float ay_g = (float)s->accel_y / IMU_ACC_LSB_PER_G;
+    float az_g = (float)s->accel_z / IMU_ACC_LSB_PER_G;
+    float gx_dps = (float)s->gyro_x / IMU_GYRO_LSB_PER_DPS;
+    float gy_dps = (float)s->gyro_y / IMU_GYRO_LSB_PER_DPS;
+    float gz_dps = (float)s->gyro_z / IMU_GYRO_LSB_PER_DPS;
+    float gyro_sum = fabsf(gx_dps) + fabsf(gy_dps) + fabsf(gz_dps);
+    float acc_norm = sqrtf(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
+
     if (gyro_sum > IMU_GYRO_MOVE_SUM_DPS) {
         return true;
     }
 
-    float acc_norm = sqrtf(ax_g * ax_g + ay_g * ay_g + az_g * az_g);
-    return imu_absf(acc_norm - 1.0f) > IMU_ACC_NORM_MOVING_G;
+    return fabsf(acc_norm - 1.0f) > IMU_ACC_NORM_MOVING_G;
 }
 
-static void imu_fusion_update_biases(bool moving, const float gyro_dps[3])
+static int imu_agm_init(void)
 {
-    if (g_fusion.bias_ready || moving) {
+    InvnAlgoAGMConfig config;
+
+    memset(&g_agm, 0, sizeof(g_agm));
+    memset(&config, 0, sizeof(config));
+
+    (void)settings_load_subtree("imu");
+    imu_agm_restore_biases();
+
+    config.acc_fsr = IMU_ACC_FSR_G;
+    config.gyr_fsr = IMU_GYRO_FSR_DPS;
+    config.acc_odr_us = IMU_ODR_US;
+    config.gyr_odr_us = IMU_ODR_US;
+    config.temp_sensitivity = IMU_TEMP_SENS_Q30;
+    config.temp_offset = IMU_TEMP_OFFSET_Q16;
+    config.acc_bias_q16 = g_agm.acc_bias_q16;
+    config.gyr_bias_q16 = g_agm.gyr_bias_q16;
+    config.mag_bias_q16 = g_agm.mag_bias_q16;
+    config.acc_accuracy = g_agm.bias_restored ? g_agm.saved_bias_blob.acc_accuracy : 0;
+    config.gyr_accuracy = g_agm.bias_restored ? g_agm.saved_bias_blob.gyr_accuracy : 0;
+    config.mag_accuracy = g_agm.bias_restored ? g_agm.saved_bias_blob.mag_accuracy : 0;
+
+    if (invn_algo_agm_init(&config) != 0U) {
+        return HAL_EIO;
+    }
+
+    g_agm.inited = true;
+    LOG_INF("imu test: TDK AGM init ok (%s)", invn_algo_agm_version());
+    if (g_agm.bias_restored) {
+        LOG_INF("imu test: AGM bias restored acc=%d gyr=%d mag=%d",
+                (int)config.acc_accuracy, (int)config.gyr_accuracy, (int)config.mag_accuracy);
+    }
+    return HAL_OK;
+}
+
+static void imu_agm_step(const imu_sample_t *s, uint64_t ts_us)
+{
+    if (!g_agm.inited || (s == NULL)) {
         return;
     }
 
-    g_fusion.gyro_bias_accum[0] += gyro_dps[0];
-    g_fusion.gyro_bias_accum[1] += gyro_dps[1];
-    g_fusion.gyro_bias_accum[2] += gyro_dps[2];
-    g_fusion.bias_count++;
+    memset(&g_agm.input, 0, sizeof(g_agm.input));
+    g_agm.output.mask = 0;
 
-    if (g_fusion.bias_count >= IMU_BIAS_SAMPLES_REQUIRED) {
-        g_fusion.gyro_bias_dps[0] = g_fusion.gyro_bias_accum[0] / (float)g_fusion.bias_count;
-        g_fusion.gyro_bias_dps[1] = g_fusion.gyro_bias_accum[1] / (float)g_fusion.bias_count;
-        g_fusion.gyro_bias_dps[2] = g_fusion.gyro_bias_accum[2] / (float)g_fusion.bias_count;
-        g_fusion.bias_ready = true;
+    g_agm.input.mask = INVN_ALGO_AGM_INPUT_MASK_ACC | INVN_ALGO_AGM_INPUT_MASK_GYR;
+    g_agm.input.sRimu_time_us = (int64_t)ts_us;
+    g_agm.input.sRacc_data[0] = ((int32_t)s->accel_x) << 4;
+    g_agm.input.sRacc_data[1] = ((int32_t)s->accel_y) << 4;
+    g_agm.input.sRacc_data[2] = ((int32_t)s->accel_z) << 4;
+    g_agm.input.sRgyr_data[0] = ((int32_t)s->gyro_x) << 4;
+    g_agm.input.sRgyr_data[1] = ((int32_t)s->gyro_y) << 4;
+    g_agm.input.sRgyr_data[2] = ((int32_t)s->gyro_z) << 4;
+    g_agm.input.sRtemp_data = s->temp;
+
+    invn_algo_agm_process(&g_agm.input, &g_agm.output);
+    imu_agm_maybe_save_biases((uint32_t)(ts_us / 1000U));
+
+    if ((g_agm.output.mask & INVN_ALGO_AGM_OUTPUT_MASK_QUAT_AG) != 0) {
+        g_agm.has_solution = true;
     }
-}
-
-static void imu_fusion_step(const imu_sample_t *s, uint32_t ts_ms)
-{
-    if (!g_fusion.inited || s == NULL) {
-        return;
-    }
-
-    float dt = 0.0f;
-    if (g_fusion.last_ts_ms != 0U) {
-        uint32_t delta_ms = ts_ms - g_fusion.last_ts_ms;
-        if (delta_ms > 100U) {
-            delta_ms = 100U;
-        }
-        dt = (float)delta_ms / 1000.0f;
-    }
-    g_fusion.last_ts_ms = ts_ms;
-
-    float ax = (float)s->accel_x / IMU_ACC_LSB_PER_G;
-    float ay = (float)s->accel_y / IMU_ACC_LSB_PER_G;
-    float az = (float)s->accel_z / IMU_ACC_LSB_PER_G;
-    float gyro_dps[3] = {
-        (float)s->gyro_x / IMU_GYRO_LSB_PER_DPS,
-        (float)s->gyro_y / IMU_GYRO_LSB_PER_DPS,
-        (float)s->gyro_z / IMU_GYRO_LSB_PER_DPS,
-    };
-
-    bool moving = imu_fusion_is_moving(ax, ay, az, gyro_dps[0], gyro_dps[1], gyro_dps[2]);
-    imu_fusion_update_biases(moving, gyro_dps);
-
-    if (dt <= 0.0f) {
-        return;
-    }
-
-    float q0 = g_fusion.q.w;
-    float q1 = g_fusion.q.x;
-    float q2 = g_fusion.q.y;
-    float q3 = g_fusion.q.z;
-
-    float gx = (gyro_dps[0] - g_fusion.gyro_bias_dps[0]) * (IMU_PI / 180.0f);
-    float gy = (gyro_dps[1] - g_fusion.gyro_bias_dps[1]) * (IMU_PI / 180.0f);
-    float gz = (gyro_dps[2] - g_fusion.gyro_bias_dps[2]) * (IMU_PI / 180.0f);
-
-    float acc_norm = sqrtf(ax * ax + ay * ay + az * az);
-    if (acc_norm > 0.0f) {
-        ax /= acc_norm;
-        ay /= acc_norm;
-        az /= acc_norm;
-
-        float two_q0 = 2.0f * q0;
-        float two_q1 = 2.0f * q1;
-        float two_q2 = 2.0f * q2;
-        float two_q3 = 2.0f * q3;
-        float four_q0 = 4.0f * q0;
-        float four_q1 = 4.0f * q1;
-        float four_q2 = 4.0f * q2;
-        float eight_q1 = 8.0f * q1;
-        float eight_q2 = 8.0f * q2;
-        float q0q0 = q0 * q0;
-        float q1q1 = q1 * q1;
-        float q2q2 = q2 * q2;
-        float q3q3 = q3 * q3;
-
-        float s0 = four_q0 * q2q2 + two_q2 * ax + four_q0 * q1q1 - two_q1 * ay;
-        float s1 = four_q1 * q3q3 - two_q3 * ax + 4.0f * q0q0 * q1 - two_q0 * ay - four_q1 +
-                   eight_q1 * q1q1 + eight_q1 * q2q2 + four_q1 * az;
-        float s2 = 4.0f * q0q0 * q2 + two_q0 * ax + four_q2 * q3q3 - two_q3 * ay - four_q2 +
-                   eight_q2 * q1q1 + eight_q2 * q2q2 + four_q2 * az;
-        float s3 = 4.0f * q1q1 * q3 - two_q1 * ax + 4.0f * q2q2 * q3 - two_q2 * ay;
-
-        float s_norm = sqrtf(s0 * s0 + s1 * s1 + s2 * s2 + s3 * s3);
-        if (s_norm > 0.0f) {
-            s0 /= s_norm;
-            s1 /= s_norm;
-            s2 /= s_norm;
-            s3 /= s_norm;
-
-            float q_dot0 = 0.5f * (-q1 * gx - q2 * gy - q3 * gz) - IMU_FUSION_BETA * s0;
-            float q_dot1 = 0.5f * (q0 * gx + q2 * gz - q3 * gy) - IMU_FUSION_BETA * s1;
-            float q_dot2 = 0.5f * (q0 * gy - q1 * gz + q3 * gx) - IMU_FUSION_BETA * s2;
-            float q_dot3 = 0.5f * (q0 * gz + q1 * gy - q2 * gx) - IMU_FUSION_BETA * s3;
-
-            g_fusion.q.w = q0 + q_dot0 * dt;
-            g_fusion.q.x = q1 + q_dot1 * dt;
-            g_fusion.q.y = q2 + q_dot2 * dt;
-            g_fusion.q.z = q3 + q_dot3 * dt;
-            imu_quat_normalize(&g_fusion.q);
-            return;
-        }
-    }
-
-    g_fusion.q.w = q0 + 0.5f * (-q1 * gx - q2 * gy - q3 * gz) * dt;
-    g_fusion.q.x = q1 + 0.5f * (q0 * gx + q2 * gz - q3 * gy) * dt;
-    g_fusion.q.y = q2 + 0.5f * (q0 * gy - q1 * gz + q3 * gx) * dt;
-    g_fusion.q.z = q3 + 0.5f * (q0 * gz + q1 * gy - q2 * gx) * dt;
-    imu_quat_normalize(&g_fusion.q);
-}
-
-static int32_t imu_float_to_q30(float v)
-{
-    float scaled = v * 1073741824.0f;
-    if (scaled > 2147483647.0f) {
-        scaled = 2147483647.0f;
-    } else if (scaled < -2147483648.0f) {
-        scaled = -2147483648.0f;
-    }
-    return (int32_t)scaled;
-}
-
-static int32_t imu_float_to_q16(float v)
-{
-    float scaled = v * 65536.0f;
-    if (scaled > 2147483647.0f) {
-        scaled = 2147483647.0f;
-    } else if (scaled < -2147483648.0f) {
-        scaled = -2147483648.0f;
-    }
-    return (int32_t)scaled;
-}
-
-static void imu_compute_gravity_and_linear(const imu_sample_t *s,
-                                           float gravity_g[3],
-                                           float linear_g[3])
-{
-    const float q0 = g_fusion.q.w;
-    const float q1 = g_fusion.q.x;
-    const float q2 = g_fusion.q.y;
-    const float q3 = g_fusion.q.z;
-
-    gravity_g[0] = 2.0f * (q1 * q3 - q0 * q2);
-    gravity_g[1] = 2.0f * (q0 * q1 + q2 * q3);
-    gravity_g[2] = q0 * q0 - q1 * q1 - q2 * q2 + q3 * q3;
-
-    float acc_g[3] = {
-        (float)s->accel_x / IMU_ACC_LSB_PER_G,
-        (float)s->accel_y / IMU_ACC_LSB_PER_G,
-        (float)s->accel_z / IMU_ACC_LSB_PER_G,
-    };
-    linear_g[0] = acc_g[0] - gravity_g[0];
-    linear_g[1] = acc_g[1] - gravity_g[1];
-    linear_g[2] = acc_g[2] - gravity_g[2];
 }
 
 static void imu_publish_attitude(const imu_sample_t *s, uint32_t ts_ms, uint16_t seq)
 {
-    if (!g_fusion.inited || !app_uplink_service_is_ready() ||
-        ((seq % CONFIG_IMU_ATTITUDE_UPLINK_EVERY_N) != 0U)) {
-        return;
-    }
-
-    float gyro_dps[3] = {
-        (float)s->gyro_x / IMU_GYRO_LSB_PER_DPS,
-        (float)s->gyro_y / IMU_GYRO_LSB_PER_DPS,
-        (float)s->gyro_z / IMU_GYRO_LSB_PER_DPS,
-    };
-    float acc_g[3] = {
-        (float)s->accel_x / IMU_ACC_LSB_PER_G,
-        (float)s->accel_y / IMU_ACC_LSB_PER_G,
-        (float)s->accel_z / IMU_ACC_LSB_PER_G,
-    };
-    bool moving = imu_fusion_is_moving(acc_g[0], acc_g[1], acc_g[2],
-                                       gyro_dps[0], gyro_dps[1], gyro_dps[2]);
-    float gravity_g[3];
-    float linear_g[3];
-    imu_compute_gravity_and_linear(s, gravity_g, linear_g);
-
     struct __packed {
         uint8_t ver;
         uint8_t type;
@@ -301,30 +257,36 @@ static void imu_publish_attitude(const imu_sample_t *s, uint32_t ts_ms, uint16_t
         uint8_t gyr_accuracy;
         uint8_t mag_accuracy;
         uint8_t flags;
-    } att_pkt = {
-        .ver = 1,
-        .type = 1,
-        .seq = seq,
-        .qw_q30 = imu_float_to_q30(g_fusion.q.w),
-        .qx_q30 = imu_float_to_q30(g_fusion.q.x),
-        .qy_q30 = imu_float_to_q30(g_fusion.q.y),
-        .qz_q30 = imu_float_to_q30(g_fusion.q.z),
-        .gx_q16 = imu_float_to_q16(gravity_g[0]),
-        .gy_q16 = imu_float_to_q16(gravity_g[1]),
-        .gz_q16 = imu_float_to_q16(gravity_g[2]),
-        .lax_q16 = imu_float_to_q16(linear_g[0]),
-        .lay_q16 = imu_float_to_q16(linear_g[1]),
-        .laz_q16 = imu_float_to_q16(linear_g[2]),
-        .acc_accuracy = g_fusion.bias_ready ? 3U : 0U,
-        .gyr_accuracy = g_fusion.bias_ready ? 2U : 0U,
-        .mag_accuracy = 0U,
-        .flags = IMU_ATT_FLAG_VALID,
-    };
+    } att_pkt;
 
-    if (moving) {
+    if (!g_agm.inited || !g_agm.has_solution || !app_uplink_service_is_ready() ||
+        ((seq % CONFIG_IMU_ATTITUDE_UPLINK_EVERY_N) != 0U)) {
+        return;
+    }
+
+    memset(&att_pkt, 0, sizeof(att_pkt));
+    att_pkt.ver = 1;
+    att_pkt.type = 1;
+    att_pkt.seq = seq;
+    att_pkt.qw_q30 = g_agm.output.grv_quat_q30[0];
+    att_pkt.qx_q30 = g_agm.output.grv_quat_q30[1];
+    att_pkt.qy_q30 = g_agm.output.grv_quat_q30[2];
+    att_pkt.qz_q30 = g_agm.output.grv_quat_q30[3];
+    att_pkt.gx_q16 = g_agm.output.gravity_q16[0];
+    att_pkt.gy_q16 = g_agm.output.gravity_q16[1];
+    att_pkt.gz_q16 = g_agm.output.gravity_q16[2];
+    att_pkt.lax_q16 = g_agm.output.linear_acc_q16[0];
+    att_pkt.lay_q16 = g_agm.output.linear_acc_q16[1];
+    att_pkt.laz_q16 = g_agm.output.linear_acc_q16[2];
+    att_pkt.acc_accuracy = (uint8_t)MAX(g_agm.output.acc_accuracy_flag, 0);
+    att_pkt.gyr_accuracy = (uint8_t)MAX(g_agm.output.gyr_accuracy_flag, 0);
+    att_pkt.mag_accuracy = (uint8_t)MAX(g_agm.output.mag_accuracy_flag, 0);
+    att_pkt.flags = IMU_ATT_FLAG_VALID;
+
+    if (imu_sample_is_moving(s)) {
         att_pkt.flags |= IMU_ATT_FLAG_MOVING;
     }
-    if (g_fusion.bias_ready) {
+    if (g_agm.output.gyr_accuracy_flag >= 2) {
         att_pkt.flags |= IMU_ATT_FLAG_BIAS_READY;
     }
 
@@ -350,8 +312,11 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         return;
     }
 #if IS_ENABLED(CONFIG_IMU_TDK_AGM)
-    imu_fusion_init();
-    LOG_WRN("imu test: board-side 6-axis fusion enabled; TDK hard-float library is not linked in this softfp build");
+    ret = imu_agm_init();
+    if (ret != HAL_OK) {
+        LOG_ERR("imu test: TDK AGM init failed: %d", ret);
+        return;
+    }
 #endif
     LOG_INF("imu test: start raw sampling uplink (INT1, 100Hz)");
 
@@ -362,6 +327,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
     int64_t rate_t0 = k_uptime_get();
     uint32_t rate_cnt = 0;
     int64_t last_raw_log_ms = 0;
+    uint64_t last_sample_ts_us = 0U;
 
     while (1) {
         if (g_imu_paused) {
@@ -370,7 +336,11 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         }
 
         imu_sample_t s = {0};
-        ret = hal_imu_read(&s, sizeof(s), 1000);
+        uint64_t sample_ts_us = 0U;
+        ret = hal_imu_read_timed(&s, sizeof(s), &sample_ts_us, 1000);
+        if (ret == HAL_ENOTSUP) {
+            ret = hal_imu_read(&s, sizeof(s), 1000);
+        }
         if (ret != HAL_OK) {
             if (g_imu_paused) {
                 k_msleep(20);
@@ -391,7 +361,13 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         sample_cnt++;
         rate_cnt++;
 
-        int64_t now = k_uptime_get();
+        if (sample_ts_us == 0U &&
+            (hal_imu_get_latest_us(&s, &sample_ts_us) != HAL_OK || sample_ts_us == 0U)) {
+            sample_ts_us = k_cyc_to_us_floor64(k_cycle_get_64());
+        }
+        last_sample_ts_us = sample_ts_us;
+
+        int64_t now = (int64_t)(sample_ts_us / 1000U);
         if ((now - rate_t0) >= IMU_RATE_LOG_PERIOD_MS) {
             uint32_t elapsed_ms = (uint32_t)(now - rate_t0);
             uint32_t sps = (elapsed_ms > 0U) ? (rate_cnt * 1000U / elapsed_ms) : 0U;
@@ -408,7 +384,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
         int32_t t_frac = t_abs % 100;
 
 #if IS_ENABLED(CONFIG_IMU_TDK_AGM)
-        imu_fusion_step(&s, (uint32_t)now);
+        imu_agm_step(&s, sample_ts_us);
         if (IS_ENABLED(CONFIG_IMU_ATTITUDE_UPLINK)) {
             imu_publish_attitude(&s, (uint32_t)now, (uint16_t)(sample_cnt & 0xFFFFU));
         }
@@ -457,7 +433,7 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
                 .gy = s.gyro_y,
                 .gz = s.gyro_z,
                 .temp = s.temp,
-                .ts_ms = (uint32_t)up_now,
+                .ts_ms = (uint32_t)(last_sample_ts_us / 1000U),
             };
             (void)app_uplink_publish(APP_DATA_PART_IMU,
                                      APP_UPLINK_PRIO_LOW,

@@ -13,7 +13,7 @@
 #include "driver_stats.h"
 
 #define BLE_RX_MAX_LEN 244
-#define BLE_RX_Q_LEN 128
+#define BLE_RX_Q_LEN 96
 
 LOG_MODULE_REGISTER(ble_nrf, LOG_LEVEL_WRN);
 

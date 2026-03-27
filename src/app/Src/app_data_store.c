@@ -9,6 +9,13 @@
 LOG_MODULE_REGISTER(app_data_store, LOG_LEVEL_WRN);
 
 #define APP_DATA_MAX_PAYLOAD 256
+#define APP_DATA_CTRL_SLOTS 8
+#define APP_DATA_AUDIO_UP_SLOTS 32
+#define APP_DATA_AUDIO_DOWN_SLOTS 16
+#define APP_DATA_PPG_SLOTS 12
+#define APP_DATA_IMU_SLOTS 12
+#define APP_DATA_PM_SLOTS 12
+#define APP_DATA_ATTITUDE_SLOTS 12
 
 typedef struct {
     uint32_t rec_id;
@@ -26,13 +33,13 @@ typedef struct {
 
 K_MUTEX_DEFINE(g_store_lock);
 
-static app_data_slot_t g_ctrl_slots[16];
-static app_data_slot_t g_audio_up_slots[32];
-static app_data_slot_t g_audio_down_slots[16];
-static app_data_slot_t g_ppg_slots[16];
-static app_data_slot_t g_imu_slots[16];
-static app_data_slot_t g_pm_slots[16];
-static app_data_slot_t g_attitude_slots[16];
+static app_data_slot_t g_ctrl_slots[APP_DATA_CTRL_SLOTS];
+static app_data_slot_t g_audio_up_slots[APP_DATA_AUDIO_UP_SLOTS];
+static app_data_slot_t g_audio_down_slots[APP_DATA_AUDIO_DOWN_SLOTS];
+static app_data_slot_t g_ppg_slots[APP_DATA_PPG_SLOTS];
+static app_data_slot_t g_imu_slots[APP_DATA_IMU_SLOTS];
+static app_data_slot_t g_pm_slots[APP_DATA_PM_SLOTS];
+static app_data_slot_t g_attitude_slots[APP_DATA_ATTITUDE_SLOTS];
 
 static app_data_ring_t g_rings[APP_DATA_PART_COUNT];
 

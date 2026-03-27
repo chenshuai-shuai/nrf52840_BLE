@@ -121,6 +121,24 @@ config DRIVER_IMU_NRF
 	help
 	  Enable nRF52840 IMU driver implementation.
 
+config IMU_USE_FIFO
+	bool "Enable ICM42688 FIFO sampling path"
+	default y
+	depends on DRIVER_IMU_NRF
+	help
+	  Read IMU samples from the on-chip FIFO and keep the direct register path
+	  as a fallback. This keeps the external HAL contract unchanged while
+	  improving sample timing under scheduling jitter.
+
+config IMU_FIFO_SAMPLE_RING_CAP
+	int "IMU FIFO sample ring capacity"
+	default 8
+	range 4 32
+	depends on IMU_USE_FIFO
+	help
+	  Number of decoded FIFO samples buffered inside the driver before the app
+	  thread consumes them.
+
 config HAL_FLASH
 	bool "Enable HAL Flash"
 	default n
