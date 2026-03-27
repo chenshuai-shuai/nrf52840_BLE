@@ -32,6 +32,7 @@ static app_data_slot_t g_audio_down_slots[16];
 static app_data_slot_t g_ppg_slots[16];
 static app_data_slot_t g_imu_slots[16];
 static app_data_slot_t g_pm_slots[16];
+static app_data_slot_t g_attitude_slots[16];
 
 static app_data_ring_t g_rings[APP_DATA_PART_COUNT];
 
@@ -53,6 +54,7 @@ int app_data_store_init(void)
     memset(g_ppg_slots, 0, sizeof(g_ppg_slots));
     memset(g_imu_slots, 0, sizeof(g_imu_slots));
     memset(g_pm_slots, 0, sizeof(g_pm_slots));
+    memset(g_attitude_slots, 0, sizeof(g_attitude_slots));
 
     g_rings[APP_DATA_PART_CTRL] = (app_data_ring_t){
         .slots = g_ctrl_slots, .cap = (uint16_t)(sizeof(g_ctrl_slots) / sizeof(g_ctrl_slots[0]))
@@ -71,6 +73,9 @@ int app_data_store_init(void)
     };
     g_rings[APP_DATA_PART_PM] = (app_data_ring_t){
         .slots = g_pm_slots, .cap = (uint16_t)(sizeof(g_pm_slots) / sizeof(g_pm_slots[0]))
+    };
+    g_rings[APP_DATA_PART_ATTITUDE] = (app_data_ring_t){
+        .slots = g_attitude_slots, .cap = (uint16_t)(sizeof(g_attitude_slots) / sizeof(g_attitude_slots[0]))
     };
 
     k_mutex_unlock(&g_store_lock);

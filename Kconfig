@@ -346,6 +346,32 @@ config IMU_TEST
 	help
 	  Enable IMU test thread for driver validation.
 
+config IMU_TDK_AGM
+	bool "Enable TDK AGM 6-axis fusion on nRF"
+	default n
+	depends on IMU_TEST
+	depends on HAL_IMU
+	depends on DRIVER_IMU_NRF
+	help
+	  Feed raw ICM42688 accel/gyro samples into the TDK AGM fusion library
+	  and publish fused attitude alongside the existing raw IMU uplink.
+
+config IMU_ATTITUDE_UPLINK
+	bool "Enable fused attitude uplink packets"
+	default y
+	depends on IMU_TDK_AGM
+	help
+	  Send quaternion, gravity and linear acceleration samples over BLE using
+	  a dedicated uplink part without changing the existing raw IMU packets.
+
+config IMU_ATTITUDE_UPLINK_EVERY_N
+	int "Publish fused attitude every N IMU samples"
+	range 1 20
+	default 2
+	depends on IMU_ATTITUDE_UPLINK
+	help
+	  Controls the attitude uplink rate relative to the raw IMU sample rate.
+
 config PM_TEST
 	bool "Enable PMIC test thread"
 	default n

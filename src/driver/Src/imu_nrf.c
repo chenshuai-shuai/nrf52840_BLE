@@ -4,6 +4,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/atomic.h>
+#include <zephyr/sys/util.h>
 
 #include <string.h>
 
@@ -301,20 +302,23 @@ static int imu_nrf_read(void *buf, size_t len, int timeout_ms)
         return rc;
     }
 
-    imu_sample_t *s = (imu_sample_t *)buf;
-    s->temp = (int16_t)((raw[0] << 8) | raw[1]);
-    s->accel_x = (int16_t)((raw[2] << 8) | raw[3]);
-    s->accel_y = (int16_t)((raw[4] << 8) | raw[5]);
-    s->accel_z = (int16_t)((raw[6] << 8) | raw[7]);
-    s->gyro_x = (int16_t)((raw[8] << 8) | raw[9]);
-    s->gyro_y = (int16_t)((raw[10] << 8) | raw[11]);
-    s->gyro_z = (int16_t)((raw[12] << 8) | raw[13]);
+    imu_sample_t sample = {
+        .temp = (int16_t)((raw[0] << 8) | raw[1]),
+        .accel_x = (int16_t)((raw[2] << 8) | raw[3]),
+        .accel_y = (int16_t)((raw[4] << 8) | raw[5]),
+        .accel_z = (int16_t)((raw[6] << 8) | raw[7]),
+        .gyro_x = (int16_t)((raw[8] << 8) | raw[9]),
+        .gyro_y = (int16_t)((raw[10] << 8) | raw[11]),
+        .gyro_z = (int16_t)((raw[12] << 8) | raw[13]),
+    };
 
     k_mutex_lock(&g_imu.latest_lock, K_FOREVER);
-    g_imu.latest = *s;
+    g_imu.latest = sample;
     g_imu.latest_ts_ms = (uint32_t)k_uptime_get();
     g_imu.latest_valid = true;
     k_mutex_unlock(&g_imu.latest_lock);
+
+    *(imu_sample_t *)buf = sample;
 
     return HAL_OK;
 }
@@ -324,7 +328,6 @@ static int imu_nrf_get_latest(imu_sample_t *out, uint32_t *timestamp_ms)
     if (out == NULL) {
         return HAL_EINVAL;
     }
-
     k_mutex_lock(&g_imu.latest_lock, K_FOREVER);
     if (!g_imu.latest_valid) {
         k_mutex_unlock(&g_imu.latest_lock);
