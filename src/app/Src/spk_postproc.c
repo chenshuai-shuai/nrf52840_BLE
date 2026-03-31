@@ -18,15 +18,16 @@
 #define SPK_PP_RESAMPLE_QUALITY 6U
 
 #define SPK_PP_EXP_THRESHOLD 0.018f
-#define SPK_PP_EXP_FLOOR     0.30f
-#define SPK_PP_COMP_THRESH   0.68f
-#define SPK_PP_COMP_RATIO    3.0f
-#define SPK_PP_LIMIT         0.98f
-#define SPK_PP_HP_R          0.994f
-#define SPK_PP_GATE_TH       0.0035f
-#define SPK_PP_GATE_FLOOR    0.90f
-#define SPK_PP_VOLUME_DEFAULT 460U
-#define SPK_PP_VOLUME_MAX_GAIN 1.40f
+#define SPK_PP_EXP_FLOOR     0.78f
+#define SPK_PP_COMP_THRESH   0.74f
+#define SPK_PP_COMP_RATIO    3.6f
+#define SPK_PP_LIMIT         0.972f
+#define SPK_PP_HP_R          0.986f
+#define SPK_PP_GATE_TH       0.0006f
+#define SPK_PP_GATE_FLOOR    0.985f
+#define SPK_PP_VOLUME_DEFAULT 500U
+#define SPK_PP_VOLUME_MAX_GAIN 1.55f
+#define SPK_PP_FINAL_BOOST   1.10f
 
 static const float32_t g_spk_pp_notch_coeffs[10] = {
     1.0f, -1.99961448f, 1.0f, 1.98961641f, -0.99002500f,
@@ -175,13 +176,16 @@ static void spk_pp_process_16k_output(float32_t *pcm, size_t samples, bool fade_
         }
 
         bool clipped = false;
+        y *= SPK_PP_FINAL_BOOST;
+        ay = spk_pp_absf(y);
         if (ay > SPK_PP_LIMIT) {
+            float32_t sign = (y >= 0.0f) ? 1.0f : -1.0f;
             float32_t over = ay - SPK_PP_LIMIT;
-            ay = SPK_PP_LIMIT + over * 0.16f;
+            ay = SPK_PP_LIMIT + over * 0.10f;
             if (ay > 0.985f) {
                 ay = 0.985f;
             }
-            y = (y >= 0.0f) ? ay : -ay;
+            y = sign * ay;
             clipped = true;
         }
 

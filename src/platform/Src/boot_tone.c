@@ -9,6 +9,34 @@
 
 LOG_MODULE_REGISTER(boot_tone, LOG_LEVEL_INF);
 
+#define BOOT_TONE_TARGET_PEAK 13500
+#define BOOT_TONE_RAMP_SAMPLES 32
+
+static int16_t boot_tone_limit_sample(int32_t sample)
+{
+    if (sample > 32767) {
+        sample = 32767;
+    } else if (sample < -32768) {
+        sample = -32768;
+    }
+    return (int16_t)sample;
+}
+
+static int16_t boot_tone_shape_sample(int16_t sample, int idx, int total)
+{
+    int32_t shaped = ((int32_t)sample * BOOT_TONE_TARGET_PEAK) / 12140;
+
+    /* Fade block edges slightly to reduce clicks without lowering the tone body. */
+    if (idx < BOOT_TONE_RAMP_SAMPLES) {
+        shaped = (shaped * (idx + 1)) / BOOT_TONE_RAMP_SAMPLES;
+    } else if (idx >= (total - BOOT_TONE_RAMP_SAMPLES)) {
+        int tail = total - idx;
+        shaped = (shaped * tail) / BOOT_TONE_RAMP_SAMPLES;
+    }
+
+    return boot_tone_limit_sample(shaped);
+}
+
 static int boot_tone_write_block(const int16_t *buf, size_t len)
 {
     int last_ret = -EAGAIN;
@@ -53,8 +81,10 @@ void boot_tone_play(void)
 
     int16_t buf[160];
     const uint32_t rate = 16000U;
-    const uint32_t tone_hz[] = { 880U, 1175U, 1568U };
-    const uint8_t tone_blocks[] = { 35, 35, 45 }; /* 10 ms per block */
+    /* Battery-only + 4 ohm speaker:
+     * reduce low-frequency energy and shorten sustain to avoid rail droop. */
+    const uint32_t tone_hz[] = { 1320U, 1760U, 2350U };
+    const uint8_t tone_blocks[] = { 16, 16, 22 }; /* 10 ms per block */
 
     LOG_INF("boot tone: start");
     int64_t start_ms = k_uptime_get();
@@ -65,7 +95,7 @@ void boot_tone_play(void)
         for (int block = 0; block < tone_blocks[t]; block++) {
             for (int i = 0; i < 160; i++) {
                 uint32_t idx = (phase >> 16) & 0x1FU;
-                buf[i] = sine32[idx];
+                buf[i] = boot_tone_shape_sample(sine32[idx], i, ARRAY_SIZE(buf));
                 phase += step;
             }
             ret = boot_tone_write_block(buf, sizeof(buf));
@@ -77,7 +107,7 @@ void boot_tone_play(void)
         }
 
         memset(buf, 0, sizeof(buf));
-        for (int block = 0; block < 7; block++) {
+        for (int block = 0; block < 5; block++) {
             ret = boot_tone_write_block(buf, sizeof(buf));
             if (ret != HAL_OK) {
                 LOG_ERR("boot tone: silent write failed: %d", ret);

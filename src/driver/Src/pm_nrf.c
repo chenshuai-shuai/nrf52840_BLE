@@ -64,6 +64,14 @@ LOG_MODULE_REGISTER(pm_nrf, LOG_LEVEL_WRN);
 #define PM_CHG_CV_MV_DEFAULT  4200
 #define PM_CHG_CC_MA_DEFAULT  200
 
+/* MAX77658 SBB peak current limit selection:
+ * 0b00 = 1.0A, 0b01 = 0.75A, 0b10 = 0.5A, 0b11 = 0.333A.
+ * Raise SBB0 first because the speaker path appears to sag on battery-only power.
+ */
+#define PM_SBB0_IP_MAX        0x0u
+#define PM_SBB1_IP_DEFAULT    0x2u
+#define PM_SBB2_IP_DEFAULT    0x0u
+
 static const struct i2c_dt_spec g_i2c = I2C_DT_SPEC_GET(PM_NODE);
 static const struct gpio_dt_spec g_nirq = GPIO_DT_SPEC_GET_OR(PM_NODE, nirq_gpios, {0});
 static const struct gpio_dt_spec g_alrt = GPIO_DT_SPEC_GET_OR(PM_NODE, alrt_gpios, {0});
@@ -239,30 +247,36 @@ static int pm_nrf_set_mode(int mode)
 {
     LOG_INF("pm set mode=%d", mode);
     if (mode == 0) {
-        int ret = pm_config_sbb(PM_REG_CNFG_SBB0_A, PM_REG_CNFG_SBB0_B, PM_SBB_MV_DEFAULT, 0x2u, true);
+        int ret = pm_config_sbb(PM_REG_CNFG_SBB0_A, PM_REG_CNFG_SBB0_B,
+                                PM_SBB_MV_DEFAULT, PM_SBB0_IP_MAX, true);
         if (ret != HAL_OK) {
             return ret;
         }
-        ret = pm_config_sbb(PM_REG_CNFG_SBB1_A, PM_REG_CNFG_SBB1_B, PM_SBB_MV_DEFAULT, 0x2u, true);
+        ret = pm_config_sbb(PM_REG_CNFG_SBB1_A, PM_REG_CNFG_SBB1_B,
+                            PM_SBB_MV_DEFAULT, PM_SBB1_IP_DEFAULT, true);
         if (ret != HAL_OK) {
             return ret;
         }
-        ret = pm_config_sbb(PM_REG_CNFG_SBB2_A, PM_REG_CNFG_SBB2_B, PM_SBB_MV_DEFAULT, 0x0u, true);
+        ret = pm_config_sbb(PM_REG_CNFG_SBB2_A, PM_REG_CNFG_SBB2_B,
+                            PM_SBB_MV_DEFAULT, PM_SBB2_IP_DEFAULT, true);
         if (ret != HAL_OK) {
             return ret;
         }
         return pm_config_charger(PM_CHG_CV_MV_DEFAULT, PM_CHG_CC_MA_DEFAULT, true);
     }
     if (mode == 1) {
-        int ret = pm_config_sbb(PM_REG_CNFG_SBB0_A, PM_REG_CNFG_SBB0_B, PM_SBB_MV_DEFAULT, 0x2u, false);
+        int ret = pm_config_sbb(PM_REG_CNFG_SBB0_A, PM_REG_CNFG_SBB0_B,
+                                PM_SBB_MV_DEFAULT, PM_SBB0_IP_MAX, false);
         if (ret != HAL_OK) {
             return ret;
         }
-        ret = pm_config_sbb(PM_REG_CNFG_SBB1_A, PM_REG_CNFG_SBB1_B, PM_SBB_MV_DEFAULT, 0x2u, false);
+        ret = pm_config_sbb(PM_REG_CNFG_SBB1_A, PM_REG_CNFG_SBB1_B,
+                            PM_SBB_MV_DEFAULT, PM_SBB1_IP_DEFAULT, false);
         if (ret != HAL_OK) {
             return ret;
         }
-        return pm_config_sbb(PM_REG_CNFG_SBB2_A, PM_REG_CNFG_SBB2_B, PM_SBB_MV_DEFAULT, 0x0u, false);
+        return pm_config_sbb(PM_REG_CNFG_SBB2_A, PM_REG_CNFG_SBB2_B,
+                             PM_SBB_MV_DEFAULT, PM_SBB2_IP_DEFAULT, false);
     }
     if (mode == 2) {
         return pm_config_charger(PM_CHG_CV_MV_DEFAULT, PM_CHG_CC_MA_DEFAULT, false);
