@@ -1,0 +1,25 @@
+description: TI TMP119 temperature sensor driven over software I2C GPIOs
+
+compatible: "ti,tmp119-sw-i2c"
+
+include: base.yaml
+
+properties:
+  reg:
+    required: true
+    description: 7-bit I2C address selected by the module jumper.
+
+  scl-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO used as software-I2C SCL.
+
+  sda-gpios:
+    type: phandle-array
+    required: true
+    description: GPIO used as software-I2C SDA.
+
+  alert-gpios:
+    type: phandle-array
+    required: true
+    description: ALERT or data-ready GPIO from TMP119.

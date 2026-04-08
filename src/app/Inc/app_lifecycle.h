@@ -13,6 +13,7 @@ typedef enum {
     APP_LC_RTC,
     APP_LC_IMU,
     APP_LC_PPG,
+    APP_LC_TEMP,
     APP_LC_GPS,
     APP_LC_PM_TEST,
     APP_LC_COUNT

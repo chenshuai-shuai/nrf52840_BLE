@@ -41,6 +41,24 @@ int main(void)
     return 0;
 #endif
 
+#if IS_ENABLED(CONFIG_TEMP_TEST_ISOLATED)
+    /* Temperature isolated test mode: only bring up PM and TMP119. */
+    ret = app_lifecycle_start(APP_LC_PM);
+    if (ret != HAL_OK) {
+        printk("temp_test pm start failed: %d\n", ret);
+        return ret;
+    }
+
+    ret = app_lifecycle_start(APP_LC_TEMP);
+    if (ret != HAL_OK) {
+        printk("temp_test start failed: %d\n", ret);
+        return ret;
+    }
+
+    printk("temp_test isolated mode\n");
+    return 0;
+#endif
+
 #if IS_ENABLED(CONFIG_BOOT_TONE)
     /* Bring up PM first so speaker/amp rails are stable before boot tone. */
     (void)app_lifecycle_start(APP_LC_PM);

@@ -1,0 +1,60 @@
+C51 COMPILER V8.08   APP                                                                   12/15/2025 19:53:30 PAGE 1   
+
+
+C51 COMPILER V8.08, COMPILATION OF MODULE APP
+OBJECT MODULE PLACED IN ..\obj\app.obj
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE ..\app\app.c LARGE BROWSE INCDIR(..\app;..\hardware\I2C;..\hardware\TMP119;
+                    -..\hardware\UART1;..\stclib) DEBUG OBJECTEXTEND PRINT(..\list\app.lst) OBJECT(..\obj\app.obj)
+
+line level    source
+
+   1          /**********************************************************************  
+   2          * 公司名称 : 东莞市上古时代电子技术有限公司
+   3          * 模块名称 ：TMP119 主程序
+   4          * 系统主频 : 22.1184 MHz
+   5          * 创建人   : eysmcu
+   6          * 修改人   : eysmcu 
+   7          * 创建日期 : 2025年5月4日
+   8          * 店铺地址 : http://mindesigner.taobao.com
+   9          * 淘宝ID号 : eysmcu
+  10          * 重要声明 ：本例程为东莞市上古时代电子技术有限公司原创，本程序只供学习
+  11          使用，未经作者许可，不得用于其它任何用途，转载清注明出处！！！
+  12          
+  13          
+  14                                                           Copyright(C) 上古时代
+  15          ***********************************************************************/
+  16          
+  17          #include "app.h"
+  18          
+  19          /**********************************************************************
+  20          * 名称 : main(void)
+  21          * 功能 : 主函数
+  22          * 输入 : 无
+  23          * 输出 ：无
+  24          * 说明 : 无
+  25          ***********************************************************************/
+  26          void main(void)
+  27          {
+  28   1              ANT_I2C_Initl();                                //初始化I2C
+  29   1              delay_ms(10);                                   //延时10ms
+  30   1              ANT_UART1_Initl(9600L);                 //初始化串口1 
+  31   1              TMP_Initl();                                    //初始化TMP117  
+  32   1              while(1)
+  33   1              {
+  34   2                      printf("Temperature = %.2f ℃\r\n",TMP119_Read_Temperature());
+  35   2              }
+  36   1      }                 
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =     44    ----
+   CONSTANT SIZE    =     24    ----
+   XDATA SIZE       =   ----    ----
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

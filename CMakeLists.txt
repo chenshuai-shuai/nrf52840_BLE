@@ -49,6 +49,11 @@ if(CONFIG_PM_TEST)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_pm_test.c
   )
 endif()
+if(CONFIG_TEMP_TEST)
+  list(APPEND APP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_temp_test.c
+  )
+endif()
 if(CONFIG_PM_SERVICE)
   list(APPEND APP_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/pm_service.c
@@ -111,6 +116,11 @@ if(CONFIG_HAL_PM)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/hal/Src/hal_pm.c
   )
 endif()
+if(CONFIG_HAL_TEMP)
+  list(APPEND HAL_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/hal/Src/hal_temp.c
+  )
+endif()
 
 set(DRIVER_SOURCES)
 if(CONFIG_DRIVER_AUDIO_NRF)
@@ -157,6 +167,11 @@ endif()
 if(CONFIG_DRIVER_PM_NRF)
   list(APPEND DRIVER_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/Src/pm_nrf.c
+  )
+endif()
+if(CONFIG_DRIVER_TEMP_NRF)
+  list(APPEND DRIVER_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/driver/Src/temp_nrf.c
   )
 endif()
 

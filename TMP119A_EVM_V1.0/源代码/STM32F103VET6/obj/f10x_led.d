@@ -1,0 +1,15 @@
+..\obj\f10x_led.o: ..\Hardware\LED\F10x_Led.c
+..\obj\f10x_led.o: ..\Hardware\LED\F10x_Led.h
+..\obj\f10x_led.o: ..\ANT-TB-F103-V10\Board_Driver.h
+..\obj\f10x_led.o: ..\CORE\stm32f10x.h
+..\obj\f10x_led.o: ..\CORE\core_cm3.h
+..\obj\f10x_led.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+..\obj\f10x_led.o: ..\CORE\system_stm32f10x.h
+..\obj\f10x_led.o: ..\CORE\stm32f10x_conf.h
+..\obj\f10x_led.o: ..\FWLIB\inc\stm32f10x_gpio.h
+..\obj\f10x_led.o: ..\CORE\stm32f10x.h
+..\obj\f10x_led.o: ..\FWLIB\inc\stm32f10x_rcc.h
+..\obj\f10x_led.o: ..\FWLIB\inc\stm32f10x_usart.h
+..\obj\f10x_led.o: ..\FWLIB\inc\misc.h
+..\obj\f10x_led.o: ..\FWLIB\inc\stm32f10x_bkp.h
+..\obj\f10x_led.o: ..\FWLIB\inc\stm32f10x_pwr.h

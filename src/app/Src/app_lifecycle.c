@@ -12,9 +12,11 @@
 #include "app_gps.h"
 #include "app_ppg_hr.h"
 #include "app_pm_test.h"
+#include "app_temp_test.h"
 #include "pm_service.h"
 #include "app_bus.h"
 #include "app_uplink_service.h"
+#include "hal_temp.h"
 
 LOG_MODULE_REGISTER(app_lifecycle, LOG_LEVEL_WRN);
 
@@ -167,6 +169,32 @@ static bool ppg_ready(void)
     return true;
 }
 
+static int temp_start(void)
+{
+#if IS_ENABLED(CONFIG_HAL_TEMP) && IS_ENABLED(CONFIG_DRIVER_TEMP_NRF)
+    int ret = hal_temp_init();
+    if (ret != HAL_OK) {
+        return ret;
+    }
+#if IS_ENABLED(CONFIG_TEMP_TEST)
+    app_temp_test_start();
+#endif
+    return HAL_OK;
+#else
+    return HAL_ENOTSUP;
+#endif
+}
+
+static int temp_stop(void)
+{
+    return HAL_ENOTSUP;
+}
+
+static bool temp_ready(void)
+{
+    return true;
+}
+
 static int gps_start(void)
 {
 #if IS_ENABLED(CONFIG_GPS_TEST)
@@ -258,6 +286,15 @@ static app_lifecycle_entry_t g_apps[APP_LC_COUNT] = {
         .ready = ppg_ready,
         .st = {.configured = false, .started = false, .ready = false, .last_error = HAL_OK}
     },
+    [APP_LC_TEMP] = {
+        .name = "temp",
+        .configured = IS_ENABLED(CONFIG_HAL_TEMP) && IS_ENABLED(CONFIG_DRIVER_TEMP_NRF),
+        .enabled = IS_ENABLED(CONFIG_HAL_TEMP) && IS_ENABLED(CONFIG_DRIVER_TEMP_NRF),
+        .start = temp_start,
+        .stop = temp_stop,
+        .ready = temp_ready,
+        .st = {.configured = false, .started = false, .ready = false, .last_error = HAL_OK}
+    },
     [APP_LC_GPS] = {
         .name = "gps",
         .configured = IS_ENABLED(CONFIG_GPS_TEST),
@@ -284,6 +321,7 @@ static const app_boot_item_t g_boot_order[] = {
     {.id = APP_LC_RTC, .required = false, .deps_mask = BIT(APP_LC_UPLINK)},
     {.id = APP_LC_PPG, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_IMU, .required = false, .deps_mask = BIT(APP_LC_PM)},
+    {.id = APP_LC_TEMP, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_GPS, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_PM_TEST, .required = false, .deps_mask = BIT(APP_LC_PM)},
 };

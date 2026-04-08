@@ -1,0 +1,8 @@
+"..\obj\STARTUP.obj",
+"..\obj\delay.obj",
+"..\obj\ANT_I2C.obj",
+"..\obj\ANT_UART1.obj",
+"..\obj\TMP119_EVM.obj",
+"..\obj\app.obj" 
+TO "..\obj\TMP119_EVM" 
+PRINT("..\list\TMP119_EVM.m51") RAMSIZE(256) 

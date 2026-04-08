@@ -1,0 +1,27 @@
+--cpu Cortex-M3
+"..\obj\core_cm3.o"
+"..\obj\stm32f10x_it.o"
+"..\obj\system_stm32f10x.o"
+"..\obj\startup_stm32f10x_hd.o"
+"..\obj\board_driver.o"
+"..\obj\f10x_led.o"
+"..\obj\f10x_key.o"
+"..\obj\f10x_tim3.o"
+"..\obj\f10x_uart1.o"
+"..\obj\tft_driver.o"
+"..\obj\tft_io.o"
+"..\obj\ant_i2c.o"
+"..\obj\misc.o"
+"..\obj\stm32f10x_gpio.o"
+"..\obj\stm32f10x_rcc.o"
+"..\obj\stm32f10x_rtc.o"
+"..\obj\stm32f10x_bkp.o"
+"..\obj\stm32f10x_pwr.o"
+"..\obj\stm32f10x_usart.o"
+"..\obj\stm32f10x_tim.o"
+"..\obj\app.o"
+"..\obj\tmp119_evm.o"
+--library_type=microlib --strict --scatter "..\obj\My_System.sct"
+--summary_stderr --info summarysizes --map --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list "..\list\My_System.map" -o ..\obj\My_System.axf

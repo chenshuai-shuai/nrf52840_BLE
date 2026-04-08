@@ -1,0 +1,46 @@
+### uVision2 Project, (C) Keil Software
+### Do not modify !
+
+ cExt (*.c)
+ aExt (*.s*; *.src; *.a*)
+ oExt (*.obj)
+ lExt (*.lib)
+ tExt (*.txt; *.h; *.inc)
+ pExt (*.plm)
+ CppX (*.cpp)
+ DaveTm { 0,0,0,0,0,0,0,0 }
+
+Target (TMP119_EVM_V1.0), 0x0000 // Tools: 'MCS-51'
+GRPOPT 1,(startup),0,0,0
+GRPOPT 2,(stclib),0,0,0
+GRPOPT 3,(hardware),0,0,0
+GRPOPT 4,(TMP119),1,0,0
+GRPOPT 5,(app),1,0,0
+GRPOPT 6,(ReadMe),1,0,0
+
+OPTFFF 1,1,2,0,0,0,0,0,<.\STARTUP.A51><STARTUP.A51> 
+OPTFFF 2,2,1,0,0,0,0,0,<..\stclib\delay.c><delay.c> 
+OPTFFF 3,3,1,0,0,0,0,0,<..\hardware\I2C\ANT_I2C.c><ANT_I2C.c> 
+OPTFFF 3,4,1,0,0,0,0,0,<..\hardware\UART1\ANT_UART1.c><ANT_UART1.c> 
+OPTFFF 4,5,1,1929379840,0,0,0,0,<..\hardware\TMP119\TMP119_EVM.c><TMP119_EVM.c> 
+OPTFFF 5,6,1,805306368,0,0,0,0,<..\app\app.c><app.c> 
+OPTFFF 6,7,5,436207618,0,1,23,0,<..\ReadMe\使用说明.txt><使用说明.txt> { 44,0,0,0,2,0,0,0,3,0,0,0,255,255,255,255,255,255,255,255,248,255,255,255,226,255,255,255,0,0,0,0,0,0,0,0,158,5,0,0,198,1,0,0 }
+
+
+TARGOPT 1, (TMP119_EVM_V1.0)
+ CLK51=45000000
+  OPTTT 1,1,1,0
+  OPTHX 0,65535,0,0,0
+  OPTLX 120,65,8,<..\list\>
+  OPTOX 16
+  OPTLT 1,1,1,0,1,1,0,1,0,0,0,0
+  OPTXL 1,1,1,1,1,1,1,0,0
+  OPTFL 1,0,1
+  OPTAX 255
+  OPTDL (S8051.DLL)()(DP51.DLL)(-pDR8051)(S8051.DLL)()(TP51.DLL)(-p51)
+  OPTDBG 48125,-1,()()()()()()()()()() ()()()()
+  OPTDF 0x40000002
+  OPTLE <>
+  OPTLC <>
+EndOpt
+

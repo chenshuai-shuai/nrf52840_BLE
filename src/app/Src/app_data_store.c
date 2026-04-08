@@ -16,6 +16,7 @@ LOG_MODULE_REGISTER(app_data_store, LOG_LEVEL_WRN);
 #define APP_DATA_IMU_SLOTS 12
 #define APP_DATA_PM_SLOTS 12
 #define APP_DATA_ATTITUDE_SLOTS 12
+#define APP_DATA_TEMP_SLOTS 12
 
 typedef struct {
     uint32_t rec_id;
@@ -40,6 +41,7 @@ static app_data_slot_t g_ppg_slots[APP_DATA_PPG_SLOTS];
 static app_data_slot_t g_imu_slots[APP_DATA_IMU_SLOTS];
 static app_data_slot_t g_pm_slots[APP_DATA_PM_SLOTS];
 static app_data_slot_t g_attitude_slots[APP_DATA_ATTITUDE_SLOTS];
+static app_data_slot_t g_temp_slots[APP_DATA_TEMP_SLOTS];
 
 static app_data_ring_t g_rings[APP_DATA_PART_COUNT];
 
@@ -62,6 +64,7 @@ int app_data_store_init(void)
     memset(g_imu_slots, 0, sizeof(g_imu_slots));
     memset(g_pm_slots, 0, sizeof(g_pm_slots));
     memset(g_attitude_slots, 0, sizeof(g_attitude_slots));
+    memset(g_temp_slots, 0, sizeof(g_temp_slots));
 
     g_rings[APP_DATA_PART_CTRL] = (app_data_ring_t){
         .slots = g_ctrl_slots, .cap = (uint16_t)(sizeof(g_ctrl_slots) / sizeof(g_ctrl_slots[0]))
@@ -83,6 +86,9 @@ int app_data_store_init(void)
     };
     g_rings[APP_DATA_PART_ATTITUDE] = (app_data_ring_t){
         .slots = g_attitude_slots, .cap = (uint16_t)(sizeof(g_attitude_slots) / sizeof(g_attitude_slots[0]))
+    };
+    g_rings[APP_DATA_PART_TEMP] = (app_data_ring_t){
+        .slots = g_temp_slots, .cap = (uint16_t)(sizeof(g_temp_slots) / sizeof(g_temp_slots[0]))
     };
 
     k_mutex_unlock(&g_store_lock);

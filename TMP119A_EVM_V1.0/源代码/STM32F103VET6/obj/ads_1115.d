@@ -1,0 +1,15 @@
+..\obj\ads_1115.o: ..\Hardware\ADS1115\ads_1115.c
+..\obj\ads_1115.o: ..\Hardware\ADS1115\ads_1115.h
+..\obj\ads_1115.o: ..\ANT-TB-F103-V10\Board_Driver.h
+..\obj\ads_1115.o: ..\CORE\stm32f10x.h
+..\obj\ads_1115.o: ..\CORE\core_cm3.h
+..\obj\ads_1115.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdint.h
+..\obj\ads_1115.o: ..\CORE\system_stm32f10x.h
+..\obj\ads_1115.o: ..\CORE\stm32f10x_conf.h
+..\obj\ads_1115.o: ..\FWLIB\inc\stm32f10x_gpio.h
+..\obj\ads_1115.o: ..\CORE\stm32f10x.h
+..\obj\ads_1115.o: ..\FWLIB\inc\stm32f10x_rcc.h
+..\obj\ads_1115.o: ..\FWLIB\inc\stm32f10x_usart.h
+..\obj\ads_1115.o: ..\FWLIB\inc\misc.h
+..\obj\ads_1115.o: ..\FWLIB\inc\stm32f10x_bkp.h
+..\obj\ads_1115.o: ..\FWLIB\inc\stm32f10x_pwr.h

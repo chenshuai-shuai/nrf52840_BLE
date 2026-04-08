@@ -1,0 +1,59 @@
+### uVision2 Project, (C) Keil Software
+### Do not modify !
+
+ cExt (*.c)
+ aExt (*.s*; *.src; *.a*)
+ oExt (*.obj)
+ lExt (*.lib)
+ tExt (*.txt; *.h; *.inc)
+ pExt (*.plm)
+ CppX (*.cpp)
+ DaveTm { 0,0,0,0,0,0,0,0 }
+
+Target (ADS123x), 0x0004 // Tools: 'ARM-ADS'
+GRPOPT 1,(CORE),0,0,0
+GRPOPT 2,(System),0,0,0
+GRPOPT 3,(HARDWARE),0,0,0
+GRPOPT 4,(FWLIB),0,0,0
+GRPOPT 5,(main),0,0,0
+GRPOPT 6,(ADS123X),0,0,0
+GRPOPT 7,(User),0,0,0
+GRPOPT 8,(ReadMe),0,0,0
+
+OPTFFF 1,1,1,0,0,0,0,0,<..\CORE\core_cm3.c><core_cm3.c> 
+OPTFFF 1,2,1,0,0,0,0,0,<..\CORE\stm32f10x_it.c><stm32f10x_it.c> 
+OPTFFF 1,3,1,0,0,0,0,0,<..\CORE\system_stm32f10x.c><system_stm32f10x.c> 
+OPTFFF 1,4,2,0,0,0,0,0,<..\CORE\startup_stm32f10x_hd.s><startup_stm32f10x_hd.s> 
+OPTFFF 2,5,1,0,0,0,0,0,<..\System_Config\sys.c><sys.c> 
+OPTFFF 3,6,1,0,0,0,0,0,<..\HARDWARE\UART1\STM32_F10x_UART1.c><STM32_F10x_UART1.c> 
+OPTFFF 4,7,1,0,0,0,0,0,<..\FWLIB\src\misc.c><misc.c> 
+OPTFFF 4,8,1,318767104,0,0,0,0,<..\FWLIB\src\stm32f10x_gpio.c><stm32f10x_gpio.c> 
+OPTFFF 4,9,1,83886080,0,0,0,0,<..\FWLIB\src\stm32f10x_rcc.c><stm32f10x_rcc.c> 
+OPTFFF 4,10,1,83886080,0,0,0,0,<..\FWLIB\src\stm32f10x_usart.c><stm32f10x_usart.c> 
+OPTFFF 4,11,1,0,0,0,0,0,<..\FWLIB\src\stm32f10x_tim.c><stm32f10x_tim.c> 
+OPTFFF 5,12,1,0,0,0,0,0,<..\main\sys_main.c><sys_main.c> 
+OPTFFF 6,13,1,285212674,0,157,157,0,<..\HARDWARE\ADS123X\med_ADS123x.c><med_ADS123x.c> { 44,0,0,0,2,0,0,0,3,0,0,0,255,255,255,255,255,255,255,255,248,255,255,255,226,255,255,255,0,0,0,0,0,0,0,0,110,4,0,0,93,1,0,0 }
+OPTFFF 7,14,1,452984832,0,0,0,0,<..\System_Config\Delay.c><Delay.c> 
+OPTFFF 8,15,5,285212672,0,0,0,0,<..\ReadMe\ReadMe.txt><ReadMe.txt> 
+
+
+TARGOPT 1, (ADS123x)
+ ADSCLK=8000000
+  OPTTT 1,1,1,0
+  OPTHX 1,65535,0,0,0
+  OPTLX 79,66,8,<..\list\>
+  OPTOX 16
+  OPTLT 1,1,1,0,1,1,0,1,0,0,0,0
+  OPTXL 1,1,1,1,1,1,1,0,0
+  OPTFL 1,0,1
+  OPTAX 255
+  OPTBL 0,(Reference Manual)<DATASHTS\ST\STM32F10xxx.PDF>
+  OPTDL (SARMCM3.DLL)()(DARMSTM.DLL)(-pSTM32F103ZE)(SARMCM3.DLL)()(TARMSTM.DLL)(-pSTM32F103ZE)
+  OPTDBG 49150,7,()()()()()()()()()() (Segger\JL2CM3.dll)()()()
+  OPTKEY 0,(JL2CM3)(-U99999993 -O14 -S0 -A0 -C0 -JU1 -JI127.0.0.1 -JP0 -N00("ARM CoreSight JTAG-DP") -D00(3BA00477) -L00(4) -N01("Unknown JTAG device") -D01(06414041) -L01(5) -TO18 -TC10000000 -TP21 -TDS8007 -TDT0 -TDC1F -TIEFFFFFFFF -TIP8 -TB1 -TRE0 -FO15 -FD20000000 -FC800 -FN1 -FF0STM32F10x_512 -FS08000000 -FL080000)
+  OPTKEY 0,(UL2CM3)(-O14 -S0 -C0 -N00("ARM Cortex-M3") -D00(1BA00477) -L00(4) -FO7 -FD20000000 -FC800 -FN1 -FF0STM32F10x_512 -FS08000000 -FL080000)
+  OPTDF 0x2
+  OPTLE <>
+  OPTLC <>
+EndOpt
+

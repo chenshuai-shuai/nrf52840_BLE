@@ -121,6 +121,19 @@ config DRIVER_IMU_NRF
 	help
 	  Enable nRF52840 IMU driver implementation.
 
+config HAL_TEMP
+	bool "Enable HAL Temperature"
+	default n
+	help
+	  Enable HAL for temperature sensor input.
+
+config DRIVER_TEMP_NRF
+	bool "Enable nRF52840 TMP119 Temperature Driver"
+	default n
+	depends on HAL_TEMP
+	help
+	  Enable TMP119 software-I2C temperature driver implementation.
+
 config IMU_USE_FIFO
 	bool "Enable ICM42688 FIFO sampling path"
 	default y
@@ -397,6 +410,23 @@ config PM_TEST
 	depends on DRIVER_PM_NRF
 	help
 	  Enable PMIC test thread for driver validation.
+
+config TEMP_TEST
+	bool "Enable TMP119 test thread"
+	default n
+	depends on HAL_TEMP
+	depends on DRIVER_TEMP_NRF
+	help
+	  Start a background thread that initializes TMP119 and periodically
+	  prints high-precision temperature samples.
+
+config TEMP_TEST_ISOLATED
+	bool "Enable TMP119 isolated bring-up mode"
+	default n
+	depends on TEMP_TEST
+	help
+	  Start only the PM and TMP119 test paths at boot so RTT output stays
+	  focused on temperature sensor bring-up.
 
 config GPS_TEST
 	bool "Enable GPS test thread"

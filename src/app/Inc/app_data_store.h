@@ -16,6 +16,7 @@ typedef enum {
     APP_DATA_PART_IMU,
     APP_DATA_PART_PM,
     APP_DATA_PART_ATTITUDE,
+    APP_DATA_PART_TEMP,
     APP_DATA_PART_COUNT
 } app_data_part_t;
 

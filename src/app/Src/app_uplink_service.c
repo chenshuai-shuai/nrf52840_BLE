@@ -68,7 +68,8 @@ static bool needs_uplink_wire_header(app_data_part_t part)
     return (part == APP_DATA_PART_PPG ||
             part == APP_DATA_PART_IMU ||
             part == APP_DATA_PART_PM ||
-            part == APP_DATA_PART_ATTITUDE);
+            part == APP_DATA_PART_ATTITUDE ||
+            part == APP_DATA_PART_TEMP);
 }
 
 static size_t build_uplink_wire_packet(const app_data_record_t *rec,

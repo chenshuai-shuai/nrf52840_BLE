@@ -1,0 +1,163 @@
+C51 COMPILER V8.08   ANT_UART1                                                             12/15/2025 19:53:30 PAGE 1   
+
+
+C51 COMPILER V8.08, COMPILATION OF MODULE ANT_UART1
+OBJECT MODULE PLACED IN ..\obj\ANT_UART1.obj
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE ..\hardware\UART1\ANT_UART1.c LARGE BROWSE INCDIR(..\app;..\hardware\I2C;..
+                    -\hardware\TMP119;..\hardware\UART1;..\stclib) DEBUG OBJECTEXTEND PRINT(..\list\ANT_UART1.lst) OBJECT(..\obj\ANT_UART1.ob
+                    -j)
+
+line level    source
+
+   1          /**********************************************************************  
+   2          * 公司名称 : 东莞市上古时代电子技术有限公司
+   3          * 模块名称 ：UART1 驱动
+   4          * 系统主频 : 22.1184 MHz
+   5          * 创建人   : eysmcu
+   6          * 修改人   : eysmcu 
+   7          * 创建日期 : 2025年5月4日
+   8          * 店铺地址 : http://mindesigner.taobao.com
+   9          * 淘宝ID号 : eysmcu
+  10          * 重要声明 ：本例程为东莞市上古时代电子技术有限公司原创，本程序只供学习
+  11          使用，未经作者许可，不得用于其它任何用途，转载清注明出处！！！
+  12          
+  13          
+  14                                                           Copyright(C) 上古时代
+  15          ***********************************************************************/
+  16          
+  17          #include "ANT_UART1.h"
+  18          
+  19          /****************************参数定义*********************************/
+  20          //1.串口标志位
+  21          
+  22          bit u1_Busy = Idle;                                     
+  23          
+  24          /**********************************************************************
+  25          * 名称 : ANT_UART1_Initl(uint32_t uBaud)
+  26          * 功能 : 串口1初始化函数
+  27          * 输入 : uBaud -- 波特率
+  28          * 输出 ：无
+  29          * 说明 : 无
+  30          ***********************************************************************/
+  31          void ANT_UART1_Initl(uint32_t uBaud)
+  32          {
+  33   1      #if (PARITYBIT == NONE_PARITY)
+  34   1          SCON = 0x50;            //8-bit variable UART
+  35   1      #elif (PARITYBIT == ODD_PARITY) || (PARITYBIT == EVEN_PARITY) || (PARITYBIT == MARK_PARITY)
+                  SCON = 0xda;            //9-bit variable UART, parity bit initial to 1
+              #elif (PARITYBIT == SPACE_PARITY)
+                  SCON = 0xd2;            //9-bit variable UART, parity bit initial to 0
+              #endif
+  40   1      
+  41   1          TMOD = 0x20;            //Set Timer1 as 8-bit auto reload mode
+  42   1          TH1 = TL1 = -(F_cpu / 12 / 32 / uBaud); //Set auto-reload vaule
+  43   1          TR1 = 1;                //Timer1 start run
+  44   1          ES = 1;                 //Enable UART interrupt
+  45   1          EA = 1;                 //Open master interrupt switch
+  46   1              TI = 1;                                 //printf
+  47   1      
+  48   1              u1_Busy = Idle;
+  49   1      }
+  50          /**********************************************************************
+  51          * 名称 : ANT_UART1_SendByte(uint8_t value)
+  52          * 功能 : 串口1单字节发送函数
+  53          * 输入 : value -- 数据
+C51 COMPILER V8.08   ANT_UART1                                                             12/15/2025 19:53:30 PAGE 2   
+
+  54          * 输出 ：无
+  55          * 说明 : 无
+  56          ***********************************************************************/
+  57          void ANT_UART1_SendByte(uint8_t value)
+  58          {
+  59   1          while (u1_Busy);            //Wait for the completion of the previous data is sent
+  60   1          ACC = value;                //Calculate the even parity bit P (PSW.0)
+  61   1          if (P)                  //Set the parity bit according to P
+  62   1          {
+  63   2      #if (PARITYBIT == ODD_PARITY)
+                      TB8 = 0;            //Set parity bit to 0
+              #elif (PARITYBIT == EVEN_PARITY)
+                      TB8 = 1;            //Set parity bit to 1
+              #endif
+  68   2          }
+  69   1          else
+  70   1          {
+  71   2      #if (PARITYBIT == ODD_PARITY)
+                      TB8 = 1;            //Set parity bit to 1
+              #elif (PARITYBIT == EVEN_PARITY)
+                      TB8 = 0;            //Set parity bit to 0
+              #endif
+  76   2          }
+  77   1          u1_Busy = Busy;
+  78   1          SBUF = ACC;             //Send data to UART buffer
+  79   1      }
+  80          /**********************************************************************
+  81          * 名称 : ANT_UART1_SendString(char *s)
+  82          * 功能 : 串口1字符串发送函数
+  83          * 输入 : *s -- 字符串
+  84          * 输出 ：无
+  85          * 说明 : 无
+  86          ***********************************************************************/
+  87           void ANT_UART1_SendString(char *s)
+  88          {
+  89   1          while (*s)              //Check the end of the string
+  90   1          {
+  91   2              ANT_UART1_SendByte(*s++);     //Send current char and increment string ptr
+  92   2          }
+  93   1      }
+  94          /**********************************************************************
+  95          * 名称 : ANT_UART1_ISR(void) interrupt 4
+  96          * 功能 : 串口1中断服务程序
+  97          * 输入 : 无
+  98          * 输出 ：无
+  99          * 说明 : 无
+ 100          ***********************************************************************/
+ 101          void ANT_UART1_ISR(void) interrupt 4
+ 102          {
+ 103   1              //1.接收中断
+ 104   1          if (RI)
+ 105   1          {
+ 106   2              RI = 0;             //Clear receive interrupt flag
+ 107   2          }
+ 108   1              //2.发送中断
+ 109   1          else if (TI)
+ 110   1          {
+ 111   2              TI = 0;             //Clear transmit interrupt flag
+ 112   2             u1_Busy = Idle;          //Clear transmit busy flag
+ 113   2          }
+ 114   1      }
+ 115          /**********************************************************************
+C51 COMPILER V8.08   ANT_UART1                                                             12/15/2025 19:53:30 PAGE 3   
+
+ 116          * 名称 : putchar(char c)
+ 117          * 功能 : 重写printf调用的putchar函数，重定向到串口输出
+ 118          * 输入 : 无
+ 119          * 输出 ：无
+ 120          * 说明 : 常用打印格式！！！
+ 121          printf("char %bd int%d long %ld\n",a,b,c);
+ 122          printf("Uchar %bu Uint %u ulong %lu\n",x,y,z);
+ 123          printf("xchar %bx xint %x xlong %lx\n",x,y,z);
+ 124          printf("string %s is at address %p\n",buf,p);
+ 125          printf("%f != %g\n",f,g);printf("%*f!=%*g\n",8,f,8,g);
+ 126          ***********************************************************************/
+ 127          char putchar(char c)
+ 128          {
+ 129   1              ANT_UART1_SendByte(c);
+ 130   1              return c;
+ 131   1      }
+ 132          
+ 133          
+ 134          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    121    ----
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =   ----       3
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =      1    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)

@@ -11,6 +11,7 @@ typedef struct {
     bool audio;
     bool ppg;
     bool imu;
+    bool temp;
     bool flash;
     bool gps;
     bool ble;

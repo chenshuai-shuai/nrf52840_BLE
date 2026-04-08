@@ -15,6 +15,7 @@
 #include "driver_mic_nrf.h"
 #include "driver_spk_nrf.h"
 #include "driver_pm_nrf.h"
+#include "driver_temp_nrf.h"
 #include "error.h"
 
 #define PLATFORM_NAME_DEFAULT "nrf52840"
@@ -98,11 +99,20 @@ static int platform_nrf52840_init(void)
             return ret;
         }
     }
+    if (IS_ENABLED(CONFIG_DRIVER_TEMP_NRF)) {
+        LOG_INF("platform: temp_nrf_register");
+        ret = temp_nrf_register();
+        if (ret != HAL_OK) {
+            LOG_ERR("platform: temp_nrf_register failed: %d", ret);
+            return ret;
+        }
+    }
 
     platform_caps_t caps = {
         .audio = IS_ENABLED(CONFIG_DRIVER_AUDIO_NRF),
         .ppg = IS_ENABLED(CONFIG_DRIVER_PPG_NRF),
         .imu = IS_ENABLED(CONFIG_DRIVER_IMU_NRF),
+        .temp = IS_ENABLED(CONFIG_DRIVER_TEMP_NRF),
         .flash = IS_ENABLED(CONFIG_DRIVER_FLASH_NRF),
         .gps = IS_ENABLED(CONFIG_DRIVER_GPS_NRF),
         .ble = IS_ENABLED(CONFIG_DRIVER_BLE_NRF),

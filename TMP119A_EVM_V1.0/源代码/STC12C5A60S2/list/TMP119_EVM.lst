@@ -1,0 +1,268 @@
+C51 COMPILER V8.08   TMP119_EVM                                                            12/15/2025 19:53:30 PAGE 1   
+
+
+C51 COMPILER V8.08, COMPILATION OF MODULE TMP119_EVM
+OBJECT MODULE PLACED IN ..\obj\TMP119_EVM.obj
+COMPILER INVOKED BY: C:\Keil\C51\BIN\C51.EXE ..\hardware\TMP119\TMP119_EVM.c LARGE BROWSE INCDIR(..\app;..\hardware\I2C;
+                    -..\hardware\TMP119;..\hardware\UART1;..\stclib) DEBUG OBJECTEXTEND PRINT(..\list\TMP119_EVM.lst) OBJECT(..\obj\TMP119_EV
+                    -M.obj)
+
+line level    source
+
+   1          /**********************************************************************  
+   2          * ¹«Ë¾Ãû³Æ : ¶«Ý¸ÊÐÉÏ¹ÅÊ±´úµç×Ó¼¼ÊõÓÐÏÞ¹«Ë¾
+   3          * Ä£¿éÃû³Æ £ºTMP119 Çý¶¯³ÌÐò
+   4          * ÏµÍ³Ö÷Æµ : 22.1184 MHz
+   5          * ´´½¨ÈË   : eysmcu
+   6          * ÐÞ¸ÄÈË   : eysmcu 
+   7          * ´´½¨ÈÕÆÚ : 2025Äê5ÔÂ4ÈÕ
+   8          * µêÆÌµØÖ· : http://mindesigner.taobao.com
+   9          * ÌÔ±¦IDºÅ : eysmcu
+  10          * ÖØÒªÉùÃ÷ £º±¾Àý³ÌÎª¶«Ý¸ÊÐÉÏ¹ÅÊ±´úµç×Ó¼¼ÊõÓÐÏÞ¹«Ë¾Ô­´´£¬±¾³ÌÐòÖ»¹©Ñ§Ï°
+  11          Ê¹ÓÃ£¬Î´¾­×÷ÕßÐí¿É£¬²»µÃÓÃÓÚÆäËüÈÎºÎÓÃÍ¾£¬×ªÔØÇå×¢Ã÷³ö´¦£¡£¡£¡
+  12          
+  13                                                           Copyright(C) ÉÏ¹ÅÊ±´ú
+  14          ***********************************************************************/
+  15          
+  16          #include "TMP119_EVM.h"
+  17          
+  18          /***************************¼Ä´æÆ÷¶¨Òå*********************************/
+  19          
+  20          union REG_RESULT RESULT_REG;                            //×ª»»½á¹û¼Ä´æÆ÷
+  21          union REG_CFG CFG_REG;                                          //ÅäÖÃ¼Ä´æÆ÷
+  22          union REG_H_LIMIT H_LIMIT_REG;                          //ÉÏÏÞ¼Ä´æÆ÷
+  23          union REG_L_LIMIT L_LIMIT_REG;                          //ÏÂÏÞ¼Ä´æÆ÷
+  24          union REG_EEPROM_UL EEPROM_UL_REG;                      //EEPROM ½âËø¼Ä´æÆ÷
+  25          union REG_EEPROM1 EEPROM1_REG;                          //EEPROM1 ¼Ä´æÆ÷
+  26          union REG_EEPROM2 EEPROM2_REG;                          //EEPROM2 ¼Ä´æÆ÷
+  27          union REG_T_OFFSET T_OFFSET_REG;                        //ÎÂ¶ÈÆ«ÒÆ¼Ä´æÆ÷
+  28          union REG_EEPROM3 EEPROM3_REG;                          //EEPROM3 ¼Ä´æÆ÷
+  29          union REG_DEVICE_ID DEVICE_ID_REG;                      //Æ÷¼þ ID ¼Ä´æÆ÷
+  30          
+  31          /**********************************************************************
+  32          * Ãû³Æ : TMP119_Write_Register(uint8_t nSLA,REG_Def nReg,uint16_t value)
+  33          * ¹¦ÄÜ : Ð´¼Ä´æÆ÷º¯Êý
+  34          * ÊäÈë : nSLA -- Éè±¸µØÖ·
+  35                           nReg -- ¼Ä´æÆ÷
+  36                           value -- Êý¾Ý
+  37          * Êä³ö £ºÎÞ
+  38          * ËµÃ÷ : ÎÞ
+  39          ***********************************************************************/
+  40          void TMP119_Write_Register(uint8_t nSLA,REG_Def nReg,uint16_t value)
+  41          {
+  42   1              I2C_Buffer[0] = nReg;                                   //Ñ¡ÔñÒªÐ´ÈëµÄ¼Ä´æÆ÷
+  43   1              I2C_Buffer[1] = value >> 8;             
+  44   1              I2C_Buffer[2] = value >> 0;
+  45   1              ANT_I2C_Wtite_nByte(nSLA,I2C_Buffer,3); 
+  46   1      }
+  47          /**********************************************************************
+  48          * Ãû³Æ : TMP119_Read_Register(uint8_t nSLA,REG_Def nReg)
+  49          * ¹¦ÄÜ : ´ÓÖ¸¶¨¼Ä´æÆ÷¶ÁÊý¾Ý
+  50          * ÊäÈë : nSLA -- Éè±¸µØÖ·
+  51                           nReg -- Ö¸¶¨¼Ä´æÆ÷
+  52          * Êä³ö £ºreg_value -- ¼Ä´æÆ÷Êý¾Ý
+  53          * ËµÃ÷ : ÎÞ
+C51 COMPILER V8.08   TMP119_EVM                                                            12/15/2025 19:53:30 PAGE 2   
+
+  54          ***********************************************************************/
+  55          uint16_t TMP119_Read_Register(uint8_t nSLA,REG_Def nReg)
+  56          {
+  57   1              uint16_t reg_value = 0x00;
+  58   1      
+  59   1              I2C_Buffer[0] = nReg;                                   //Ñ¡ÔñÒª¶ÁÈ¡µÄ¼Ä´æÆ÷
+  60   1              ANT_I2C_Wtite_nByte(nSLA,I2C_Buffer,1); //Ð´Pointer Register
+  61   1              delay_15us();                                                   //ÑÓÊ±15us
+  62   1              ANT_I2C_Read_nByte(nSLA,I2C_Buffer,2);  //¶Á¼Ä´æÆ÷
+  63   1              
+  64   1              reg_value = I2C_Buffer[0];                              //×éºÏÊý¾Ý 
+  65   1              reg_value = (reg_value << 8) + I2C_Buffer[1];
+  66   1              
+  67   1              return reg_value;
+  68   1      }
+  69          /**********************************************************************
+  70          * Ãû³Æ : TMP119_SoftReset(void)
+  71          * ¹¦ÄÜ : Èí¸´Î»º¯Êý
+  72          * ÊäÈë : ÎÞ
+  73          * Êä³ö £ºÎÞ
+  74          * ËµÃ÷ : ÎÞ
+  75          ***********************************************************************/
+  76          void TMP119_SoftReset(void)
+  77          {
+  78   1              CFG_REG.WORD = 0x00;                                    //¸´Î»¼Ä´æÆ÷
+  79   1              CFG_REG.BIT.Soft_Reset = 1;                             //ÉèÖÃÈí¸´Î»
+  80   1              
+  81   1              TMP119_Write_Register(TMP_SLA,REG_Configuration,CFG_REG.WORD);                          //Æô¶¯Èí¸´Î»
+  82   1      }
+  83          /**********************************************************************
+  84          * Ãû³Æ : TMP119_Write_CFG_Register(MOD_Def cMode,uint8_t cRate,AVG_Def nAVG)
+  85          * ¹¦ÄÜ : Ð´ÅäÖÃ¼Ä´æÆ÷º¯Êý
+  86          * ÊäÈë : cMode -- ×ª»»Ä£Ê½
+  87                           cRate -- ×ª»»ÖÜÆÚ
+  88                           nAVG -- ¾ùÖµ¼ÆËãÄ£Ê½
+  89          * Êä³ö £ºÎÞ
+  90          * ËµÃ÷ : ÎÞ
+  91          ***********************************************************************/
+  92          void TMP119_Write_CFG_Register(MOD_Def cMode,uint8_t cRate,AVG_Def nAVG)
+  93          {
+  94   1              CFG_REG.WORD = 0X00;                                    //¸´Î»¼Ä´æÆ÷
+  95   1              
+  96   1              //1.ÉèÖÃÅäÖÃ¼Ä´æÆ÷²ÎÊý
+  97   1              CFG_REG.BIT.MOD1_0 = cMode;                             //×ª»»Ä£Ê½
+  98   1              CFG_REG.BIT.CONV2_0 = cRate;                    //×ª»»ÖÜÆÚ
+  99   1              CFG_REG.BIT.AVG1_0 = nAVG;                              //¾ùÖµ¼ÆËãÄ£Ê½
+ 100   1              CFG_REG.BIT.T_nA = 0;                                   //±¨¾¯Ä£Ê½
+ 101   1              CFG_REG.BIT.POL = 0;                                    //µÍµçÆ½ÓÐÐ§
+ 102   1              CFG_REG.BIT.DR_Alert = 0;                               //ALERT Òý½Å·´Ó³¾¯±¨±êÖ¾µÄ×´Ì¬
+ 103   1              CFG_REG.BIT.NA = 0;                                             //Î´Ê¹ÓÃ£¬Ö±½Ó¸³Öµ0
+ 104   1      
+ 105   1              //2.Ð´ÈëÅäÖÃ¼Ä´æÆ÷
+ 106   1              TMP119_Write_Register(TMP_SLA,REG_Configuration,CFG_REG.WORD);          
+ 107   1      }
+ 108          /**********************************************************************
+ 109          * Ãû³Æ : TMP119_Write_TL_Limit_Register(REG_Def nReg,float Temp)
+ 110          * ¹¦ÄÜ : ÎÂ¶ÈÉÏ/ÏÂÏÞÉèÖÃº¯Êý
+ 111          * ÊäÈë : nReg -- ¼Ä´æÆ÷
+ 112                           Temp -- ÎÂ¶ÈÖµ
+ 113          * Êä³ö £ºÎÞ
+ 114          * ËµÃ÷ : ÎÞ
+ 115          ***********************************************************************/
+C51 COMPILER V8.08   TMP119_EVM                                                            12/15/2025 19:53:30 PAGE 3   
+
+ 116          void TMP119_Write_TL_Limit_Register(REG_Def nReg,float Temp)
+ 117          {
+ 118   1              if(nReg == REG_THigh_Limit || nReg == REG_TLow_Limit)
+ 119   1              {
+ 120   2                      TMP119_Write_Register(TMP_SLA,nReg,(int16_t)((float)Temp / TEMP_LSB));  //Ð´Èë¼Ä´æÆ÷    
+ 121   2              }
+ 122   1      }
+ 123          /**********************************************************************
+ 124          * Ãû³Æ : TMP119_Write_EEPROM(REG_Def nReg,uint16_t value)
+ 125          * ¹¦ÄÜ : Ð´EEPROM¼Ä´æÆ÷º¯Êý
+ 126          * ÊäÈë : nReg -- ¼Ä´æÆ÷
+ 127                           value -- Êý¾Ý
+ 128          * Êä³ö £º×´Ì¬£º0 -- ³É¹¦£¬1 -- Ê§°Ü
+ 129          * ËµÃ÷ : ÎÞ
+ 130          ***********************************************************************/
+ 131          uint8_t TMP119_Write_EEPROM(REG_Def nReg,uint16_t value)
+ 132          {
+ 133   1              EEPROM_UL_REG.WORD = 0x00;                              //¸´Î»¼Ä´æÆ÷
+ 134   1              if(nReg == REG_EEPROM2 || nReg == REG_EEPROM3)          //ÎªÖ§³ÖNISTµÄ¿É×·ËÝÐÔ£¬ÇÐÎð¶ÔEEPROM1½øÐÐ±à³Ì
+ 135   1              {
+ 136   2                      EEPROM_UL_REG.BIT.EUN = 1;                      //½âËø  
+ 137   2                      TMP119_Write_Register(TMP_SLA,REG_EEPROM_UL,EEPROM_UL_REG.WORD);                //Ð´Èë¼Ä´æÆ÷µÈ´ý½âËø³É¹¦
+ 138   2                      delay_ms(8);                                            //µÈ´ý8ms
+ 139   2                      EEPROM_UL_REG.WORD = TMP119_Read_Register(TMP_SLA,REG_EEPROM_UL);               //»Ø¶Á¼Ä´æÆ÷µÄÖµ
+ 140   2                      if(EEPROM_UL_REG.BIT.EEPROM_Busy == 0)                  //½âËø³É¹¦
+ 141   2                      {
+ 142   3                              TMP119_Write_Register(TMP_SLA,nReg,value);      //±à³ÌEEPROM
+ 143   3                      }
+ 144   2                      else return 1;                                          //½âËøÊ§°Ü
+ 145   2              }
+ 146   1              return 0;
+ 147   1      }
+ 148          /**********************************************************************
+ 149          * Ãû³Æ : TMP119_Read_EEPROM(REG_Def nReg)
+ 150          * ¹¦ÄÜ : ¶ÁEEPROM¼Ä´æÆ÷º¯Êý
+ 151          * ÊäÈë : nReg -- ¼Ä´æÆ÷
+ 152          * Êä³ö £ºEEPROMÊý¾Ý
+ 153          * ËµÃ÷ : ÎÞ
+ 154          ***********************************************************************/
+ 155          uint16_t TMP119_Read_EEPROM(REG_Def nReg)
+ 156          {
+ 157   1              if(nReg == REG_EEPROM1 || nReg == REG_EEPROM2 || nReg == REG_EEPROM3)           
+ 158   1              {
+ 159   2                      return(TMP119_Read_Register(TMP_SLA,nReg));//¶ÁÈ¡EEPROMÊý¾Ý
+ 160   2              }       
+ 161   1              else return 0;
+ 162   1      }
+ 163          /**********************************************************************
+ 164          * Ãû³Æ : TMP119_Write_Temp_Offset_Register(float Temp)
+ 165          * ¹¦ÄÜ : Ð´ÎÂ¶ÈÆ«ÒÆ¼Ä´æÆ÷
+ 166          * ÊäÈë : Temp -- ÎÂ¶ÈÖµ
+ 167          * Êä³ö £ºÎÞ
+ 168          * ËµÃ÷ : ÎÞ
+ 169          ***********************************************************************/
+ 170          void TMP119_Write_Temp_Offset_Register(float Temp)
+ 171          {
+ 172   1              TMP119_Write_Register(TMP_SLA,REG_Temp_Offset,(int16_t)((float)Temp / TEMP_LSB));
+ 173   1      }
+ 174          /**********************************************************************
+ 175          * Ãû³Æ : TMP119_Read_Device_ID(void)
+ 176          * ¹¦ÄÜ : ¶ÁÈ¡Ð¾Æ¬IDºÅ
+ 177          * ÊäÈë : ÎÞ
+C51 COMPILER V8.08   TMP119_EVM                                                            12/15/2025 19:53:30 PAGE 4   
+
+ 178          * Êä³ö £ºIDºÅ(Ä¬ÈÏ0x117)
+ 179          * ËµÃ÷ : ÎÞ
+ 180          ***********************************************************************/
+ 181          uint16_t TMP119_Read_Device_ID(void)
+ 182          {
+ 183   1              return TMP119_Read_Register(TMP_SLA,REG_Device_ID);
+ 184   1      }
+ 185          /**********************************************************************
+ 186          * Ãû³Æ : TMP_Initl(void)
+ 187          * ¹¦ÄÜ : TMP119³õÊ¼»¯º¯Êý
+ 188          * ÊäÈë : ÎÞ
+ 189          * Êä³ö £ºÎÞ
+ 190          * ËµÃ÷ : ÎÞ
+ 191          ***********************************************************************/
+ 192          void TMP_Initl(void)
+ 193          {
+ 194   1              //1.¸´Î»Ð¾Æ¬
+ 195   1              TMP119_SoftReset();                     delay_ms(10);
+ 196   1              
+ 197   1              //2.³õÊ¼»¯TMP119
+ 198   1              TMP119_Write_CFG_Register(CC1_MODE,0,AVG_32);   //0.5SÊä³öÒ»¸ö(²Î¿¼Ð¾Æ¬ÊÖ²á£¬±í 7-7. CC Ä£Ê½ÏÂµÄ×ª»»ÖÜÆÚÊ±¼
+             -ä)        
+ 199   1      }
+ 200          /**********************************************************************
+ 201          * Ãû³Æ : TMP119_Data_Ready(void)
+ 202          * ¹¦ÄÜ : TMP119×ª»»Íê³É¼ì²â
+ 203          * ÊäÈë : ÎÞ
+ 204          * Êä³ö £ºÎÞ
+ 205          * ËµÃ÷ : 0 -- ×ª»»Íê³É,1 -- ÕýÔÚ×ª»»
+ 206          ***********************************************************************/
+ 207          uint8_t TMP119_Data_Ready(void)
+ 208          {
+ 209   1              if((TMP119_Read_Register(TMP_SLA,REG_Configuration) & 0x2000) == 0x2000)
+ 210   1                      return 1;
+ 211   1              else return 0;
+ 212   1      }
+ 213          /**********************************************************************
+ 214          * Ãû³Æ : TMP119_Read_Temperature(void)
+ 215          * ¹¦ÄÜ : TMP119ÎÂ¶È¶ÁÈ¡º¯Êý
+ 216          * ÊäÈë : ÎÞ
+ 217          * Êä³ö £ºÎÞ
+ 218          * ËµÃ÷ : ÎÞ
+ 219          ***********************************************************************/
+ 220          float TMP119_Read_Temperature(void)
+ 221          {
+ 222   1              int16_t reg_value = 0x00;
+ 223   1              
+ 224   1              while(TMP119_Data_Ready() != 0);                //µÈ´ý×ª»»Íê³É
+ 225   1              reg_value = TMP119_Read_Register(TMP_SLA,REG_Temp_Result);
+ 226   1      
+ 227   1              return (float)(reg_value * TEMP_LSB);   //×ª»»³ÉÎÂ¶ÈÊä³ö
+ 228   1      }
+ 229          
+ 230          
+ 231          
+ 232          
+ 233          
+ 234          
+
+
+MODULE INFORMATION:   STATIC OVERLAYABLE
+   CODE SIZE        =    523    ----
+C51 COMPILER V8.08   TMP119_EVM                                                            12/15/2025 19:53:30 PAGE 5   
+
+   CONSTANT SIZE    =   ----    ----
+   XDATA SIZE       =     21      15
+   PDATA SIZE       =   ----    ----
+   DATA SIZE        =   ----    ----
+   IDATA SIZE       =   ----    ----
+   BIT SIZE         =   ----    ----
+END OF MODULE INFORMATION.
+
+
+C51 COMPILATION COMPLETE.  0 WARNING(S),  0 ERROR(S)
