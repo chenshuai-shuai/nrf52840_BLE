@@ -48,7 +48,7 @@
 #define __USE_GOODIX_HR_ALGORITHM__            (1)
 #define __USE_GOODIX_HRV_ALGORITHM__           (0)
 #define __USE_GOODIX_HSM_ALGORITHM__           (0)
-#define __USE_GOODIX_SPO2_ALGORITHM__          (0)
+#define __USE_GOODIX_SPO2_ALGORITHM__          (1)
 #define __USE_GOODIX_ECG_ALGORITHM__           (0)
 #define __USE_GOODIX_BT_ALGORITHM__            (0)
 #define __USE_GOODIX_RESP_ALGORITHM__          (0)

@@ -22,7 +22,11 @@
 #include "rt_thread.h"
 #include "app_uplink_service.h"
 
+#if IS_ENABLED(CONFIG_PPG_TUNE_MODE)
+LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_WRN);
+#else
 LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_INF);
+#endif
 
 #ifndef AUDIO_PKT_MAGIC0
 #define AUDIO_PKT_MAGIC0 0xA5
@@ -215,7 +219,7 @@ static void mic_dsp_process(int16_t *pcm, size_t samples)
 #define SPK_FRAME_SAMPLES 160U /* 10 ms @ 16 kHz */
 #define SPK_FRAME_BYTES (SPK_FRAME_SAMPLES * sizeof(int16_t))
 #define SPK_ENC_FRAME_MAX 88U
-#define SPK_RING_FRAMES 512U               /* ~51 KB for ADPCM frames */
+#define SPK_RING_FRAMES 256U               /* ~25 KB for ADPCM frames */
 #define SPK_HIGH_WATER_FRAMES 40U          /* ~400 ms */
 #define SPK_LOW_WATER_FRAMES 16U           /* ~160 ms */
 #define SPK_STREAM_RATE_MIN_PM 980U        /* ~0.98x realtime */
@@ -1341,7 +1345,7 @@ static void ble_test_entry(void *p1, void *p2, void *p3)
 #define MIC_UPLOAD_STACK_SIZE 2048
 #define MIC_UPLOAD_PRIO 5
 
-#define MIC_FRAME_Q_LEN 16
+#define MIC_FRAME_Q_LEN 32
 RT_THREAD_STACK_DEFINE(g_mic_test_stack, MIC_TEST_STACK_SIZE);
 
 RT_THREAD_STACK_DEFINE(g_mic_upload_stack, MIC_UPLOAD_STACK_SIZE);

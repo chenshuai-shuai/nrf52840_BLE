@@ -12,8 +12,8 @@ LOG_MODULE_REGISTER(app_uplink, LOG_LEVEL_WRN);
 
 #define APP_UPLINK_STACK_SIZE 2560
 #define APP_UPLINK_PRIORITY   5
-#define APP_UPLINK_Q_LEN      64
-#define APP_DOWNLINK_Q_LEN    128
+#define APP_UPLINK_Q_LEN      32
+#define APP_DOWNLINK_Q_LEN    32
 #define APP_DOWNLINK_RX_BURST 48
 #define APP_UPLINK_IDLE_SLEEP_MS 1
 #define APP_UPLINK_MIN_ATT_MTU 23
@@ -418,12 +418,19 @@ int app_uplink_publish(app_data_part_t part,
     }
 
     app_uplink_item_t item;
+    k_mutex_lock(&g_uplink_tx_lock, K_FOREVER);
+    struct k_msgq *q = queue_of_prio(prio);
+    if (k_msgq_num_free_get(q) == 0U) {
+        k_mutex_unlock(&g_uplink_tx_lock);
+        return HAL_EBUSY;
+    }
+
     int ret = app_db_stream_put(part, payload, len, ts_ms, &item.ticket);
     if (ret != HAL_OK) {
+        k_mutex_unlock(&g_uplink_tx_lock);
         return ret;
     }
     item.prio = prio;
-    k_mutex_lock(&g_uplink_tx_lock, K_FOREVER);
     ret = enqueue_item(prio, &item);
     k_mutex_unlock(&g_uplink_tx_lock);
     return ret;

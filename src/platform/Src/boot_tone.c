@@ -7,7 +7,11 @@
 #include "hal_spk.h"
 #include "error.h"
 
+#if IS_ENABLED(CONFIG_PPG_TUNE_MODE)
+LOG_MODULE_REGISTER(boot_tone, LOG_LEVEL_WRN);
+#else
 LOG_MODULE_REGISTER(boot_tone, LOG_LEVEL_INF);
+#endif
 
 #define BOOT_TONE_TARGET_PEAK 13500
 #define BOOT_TONE_RAMP_SAMPLES 32

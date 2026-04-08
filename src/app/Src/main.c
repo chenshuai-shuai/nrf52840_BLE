@@ -59,7 +59,9 @@ int main(void)
 
     app_lifecycle_status_t ppg_st = {0};
     if (app_lifecycle_get_status(APP_LC_PPG, &ppg_st) == HAL_OK && ppg_st.started) {
+#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
         printk("gh3026 run start\n");
+#endif
     }
 
     return 0;

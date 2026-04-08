@@ -49,7 +49,7 @@ LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_WRN);
 #define APP_PPG_HR_ACQ_STUCK_HOLD_N       10
 #define APP_PPG_HR_ACQ_STUCK_MIN_MS       15000U
 #define APP_PPG_HR_ACQ_FIRST_RETRY_MS     0U
-#define APP_PPG_LOG_PERIOD_MS             5000U
+#define APP_PPG_LOG_PERIOD_MS             3000U
 #define APP_PPG_HR_AGGR_LOCK_WINDOW_MS    12000U
 #define APP_PPG_HR_AGGR_LOCK_CONF         72
 #define APP_PPG_HR_AGGR_LOCK_STABLE_N     2U
@@ -300,8 +300,12 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                                        &last_hrv_update_ms,
                                        cur_scene != (uint8_t)HBA_SCENES_STILL_REST);
 #if IS_ENABLED(CONFIG_PPG_TUNE_MODE)
-            LOG_INF("ppg raw: hr=%d hrv=%d hrv_conf=%d conf=%d snr=%d frame=%u ts=%u",
+            LOG_INF("ppg raw: hr=%d spo2_hb=%d spo2=%d spo2_conf=%d spo2_lvl=%d hrv=%d hrv_conf=%d conf=%d snr=%d frame=%u ts=%u",
                     (int)sample.hr_bpm,
+                    (int)sample.spo2_hb,
+                    (int)sample.spo2,
+                    (int)sample.spo2_confidence,
+                    (int)sample.spo2_valid_level,
                     (int)sample.hrv,
                     (int)sample.hrv_confidence,
                     (int)sample.confidence,
@@ -311,7 +315,9 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
 #endif
             bool warmup_done = (uint32_t)(now_ms - start_ms) >= APP_PPG_HR_WARMUP_MS;
             if (warmup_done && !warmup_done_logged) {
-                LOG_INF("ppg hr: warmup done, acquiring lock");
+                if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
+                    LOG_INF("ppg hr: warmup done, acquiring lock");
+                }
                 warmup_done_logged = true;
             }
 
@@ -341,13 +347,17 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                         (void)GH3X2X_HbAlgorithmScenarioConfig((GU8)HBA_SCENES_DAILY_LIFE);
                         cur_scene = (uint8_t)HBA_SCENES_DAILY_LIFE;
                         motion_up_cnt = 0;
-                        LOG_INF("ppg hr: scenario -> DAILY_LIFE (motion=%u)", (unsigned int)motion);
+                        if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
+                            LOG_INF("ppg hr: scenario -> DAILY_LIFE (motion=%u)", (unsigned int)motion);
+                        }
                     } else if ((cur_scene == (uint8_t)HBA_SCENES_DAILY_LIFE) &&
                                (motion_down_cnt >= APP_PPG_HR_SCENE_SWITCH_DOWN_N)) {
                         (void)GH3X2X_HbAlgorithmScenarioConfig((GU8)HBA_SCENES_STILL_REST);
                         cur_scene = (uint8_t)HBA_SCENES_STILL_REST;
                         motion_down_cnt = 0;
-                        LOG_INF("ppg hr: scenario -> STILL_REST (motion=%u)", (unsigned int)motion);
+                        if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
+                            LOG_INF("ppg hr: scenario -> STILL_REST (motion=%u)", (unsigned int)motion);
+                        }
                     }
                 }
                 last_scene_eval_ms = now_ms;
@@ -419,11 +429,13 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                     mode = APP_PPG_MODE_TRACK;
                     ppg_hr_set_state(APP_PPG_HR_ST_TRACKING);
                     last_valid_ms = now_ms;
-                    LOG_INF("ppg hr: lock acquired (hr=%d conf=%d stable=%u elapsed=%ums), start output",
-                            (int)sample.hr_bpm,
-                            (int)sample.confidence,
-                            (unsigned int)stable_cnt,
-                            (unsigned int)elapsed_ms);
+                    if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
+                        LOG_INF("ppg hr: lock acquired (hr=%d conf=%d stable=%u elapsed=%ums), start output",
+                                (int)sample.hr_bpm,
+                                (int)sample.confidence,
+                                (unsigned int)stable_cnt,
+                                (unsigned int)elapsed_ms);
+                    }
                 }
             } else {
                 if (mode == APP_PPG_MODE_ACQUIRE) {
@@ -544,9 +556,13 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
             valid_out_cnt++;
             int64_t now_log_ms = k_uptime_get();
             if ((uint32_t)(now_log_ms - last_ppg_log_ms) >= APP_PPG_LOG_PERIOD_MS) {
-                LOG_INF("ppg hr: valid=%u bpm=%d hrv=%d hrv_conf=%d conf=%d snr=%d frame=%u",
+                LOG_INF("ppg hr: valid=%u bpm=%d spo2_hb=%d spo2=%d spo2_conf=%d spo2_lvl=%d hrv=%d hrv_conf=%d conf=%d snr=%d frame=%u",
                         (unsigned int)valid_out_cnt,
                         (int)sample.hr_bpm,
+                        (int)sample.spo2_hb,
+                        (int)sample.spo2,
+                        (int)sample.spo2_confidence,
+                        (int)sample.spo2_valid_level,
                         (int)sample.hrv,
                         (int)sample.hrv_confidence,
                         (int)sample.confidence,
@@ -580,8 +596,13 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                 uint32_t ts_ms;
                 int16_t hrv;
                 int16_t hrv_conf;
+                int16_t spo2;
+                int16_t spo2_conf;
+                int16_t spo2_valid;
+                int16_t spo2_invalid;
+                int16_t spo2_hb;
             } ppg_pkt = {
-                .ver = 1,
+                .ver = 3,
                 .type = 1,
                 .hr_bpm = (int16_t)sample.hr_bpm,
                 .conf = (int16_t)sample.confidence,
@@ -590,6 +611,11 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
                 .ts_ms = sample.timestamp_ms,
                 .hrv = (int16_t)sample.hrv,
                 .hrv_conf = (int16_t)sample.hrv_confidence,
+                .spo2 = (int16_t)sample.spo2,
+                .spo2_conf = (int16_t)sample.spo2_confidence,
+                .spo2_valid = (int16_t)sample.spo2_valid_level,
+                .spo2_invalid = (int16_t)sample.spo2_invalid_flag,
+                .spo2_hb = (int16_t)sample.spo2_hb,
             };
             int uret = app_uplink_publish(APP_DATA_PART_PPG,
                                           APP_UPLINK_PRIO_HIGH,
@@ -606,7 +632,8 @@ static void app_ppg_hr_thread_entry(void *p1, void *p2, void *p3)
             last_valid_ms = now_ms;
             timeout_cnt = 0;
             last_timeout_log_ms = k_uptime_get();
-            if ((uint32_t)(now_ms - last_uplink_log_ms) >= APP_PPG_LOG_PERIOD_MS) {
+            if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE) &&
+                (uint32_t)(now_ms - last_uplink_log_ms) >= APP_PPG_LOG_PERIOD_MS) {
                 LOG_INF("ppg uplink: tx_ok=%u tx_drop=%u ready=%d",
                         (unsigned int)ppg_tx_ok,
                         (unsigned int)ppg_tx_drop,
@@ -667,7 +694,9 @@ int app_ppg_hr_start(void)
     }
 
     g_ppg_hr_started = true;
-    LOG_INF("gh3026 app start");
+    if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
+        LOG_INF("gh3026 app start");
+    }
     return HAL_OK;
 }
 

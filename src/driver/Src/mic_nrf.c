@@ -5,6 +5,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/drivers/clock_control.h>
 #include <zephyr/drivers/clock_control/nrf_clock_control.h>
+#include <zephyr/sys/util.h>
 #include <string.h>
 
 #include "hal_mic.h"
@@ -23,8 +24,9 @@ LOG_MODULE_REGISTER(mic_nrf, LOG_LEVEL_WRN);
 #endif
 #define MIC_FRAME_SAMPLES    160U /* 10ms @ 16kHz */
 
-#define MIC_MAX_BLOCK_SIZE   1024U
-#define MIC_BLOCK_COUNT      16U
+#define MIC_BLOCK_SIZE_BYTES ROUND_UP(MIC_FRAME_SAMPLES * MIC_CHANNELS * (MIC_BITS_PER_SAMPLE / 8U), 4U)
+#define MIC_MAX_BLOCK_SIZE   MIC_BLOCK_SIZE_BYTES
+#define MIC_BLOCK_COUNT      36U
 
 K_MEM_SLAB_DEFINE_STATIC(mic_mem_slab, MIC_MAX_BLOCK_SIZE, MIC_BLOCK_COUNT, 4);
 

@@ -45,7 +45,7 @@
 #define __GH3X2X_I2C_DEVICE_SLAVER_ID__     (GH3X2X_I2C_ID_SEL_1H0L)
 #endif
 #define __GH3X2X_ECG_RTYPE_5M__             (0)
-#define __RESET_AGCINFO_BEFORE_SAMPLE__     (0)
+#define __RESET_AGCINFO_BEFORE_SAMPLE__     (1)
 #define __CURRENT_ECODE_CALIBRATE__         (0)
 
 /* app config */
@@ -64,7 +64,7 @@
 #define __FUNC_TYPE_AF_ENABLE__             (0)    /**< af function tye */
 #define __FUNC_TYPE_TEST_ENABLE__           (0)    /**< test function tye */
 #define __SUPPORT_HARD_ADT_CONFIG__         (1)    /**< support hard adt config */
-#define __SUPPORT_SOFT_AGC_CONFIG__         (1)    /**< support soft agc config */
+#define __SUPPORT_SOFT_AGC_CONFIG__         (0)    /**< support soft agc config */
 
 /* soft adt function type */
 #if (__SUPPORT_HARD_ADT_CONFIG__ && __FUNC_TYPE_HR_ENABLE__)

@@ -127,7 +127,9 @@ int platform_init(void)
         return HAL_OK;
     }
 
+#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
     printk("platform: init start\n");
+#endif
     int ret = platform_register(PLATFORM_NAME_DEFAULT, platform_nrf52840_init);
     if (ret != HAL_OK && ret != HAL_EBUSY) {
         LOG_ERR("platform: register failed: %d", ret);
@@ -144,7 +146,9 @@ int platform_init(void)
     if (ret == HAL_OK) {
         g_platform_inited = true;
         LOG_INF("platform: init done");
+#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
         printk("platform: init done\n");
+#endif
     } else {
         LOG_ERR("platform: init failed: %d", ret);
         printk("platform: init failed: %d\n", ret);

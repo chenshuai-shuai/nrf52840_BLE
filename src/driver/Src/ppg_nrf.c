@@ -27,6 +27,19 @@ static struct {
     uint32_t irq_count;
 } g_ppg;
 
+static struct {
+    int32_t spo2_hb;
+    int32_t spo2;
+    int32_t confidence;
+    int32_t valid_level;
+    int32_t invalid_flag;
+    uint32_t frame_id;
+    uint32_t timestamp_ms;
+    bool valid;
+} g_spo2_latest;
+
+#define PPG_SPO2_STALE_MS 10000U
+
 void ppg_nrf_on_irq(void)
 {
     k_sem_give(&g_gh_irq_sem);
@@ -34,15 +47,30 @@ void ppg_nrf_on_irq(void)
 
 void ppg_nrf_on_hr_result(int32_t hr_bpm, int32_t confidence, int32_t snr, uint32_t frame_id)
 {
+    uint32_t now_ms = (uint32_t)k_uptime_get();
     hal_ppg_sample_t sample = {
         .hr_bpm = hr_bpm,
+        .spo2_hb = 0,
+        .spo2 = 0,
+        .spo2_confidence = 0,
+        .spo2_valid_level = 0,
+        .spo2_invalid_flag = 1,
         .hrv = 0,
         .hrv_confidence = 0,
         .confidence = confidence,
         .snr = snr,
         .frame_id = frame_id,
-        .timestamp_ms = (uint32_t)k_uptime_get(),
+        .timestamp_ms = now_ms,
     };
+
+    if (g_spo2_latest.valid &&
+        ((uint32_t)(now_ms - g_spo2_latest.timestamp_ms) <= PPG_SPO2_STALE_MS)) {
+        sample.spo2_hb = g_spo2_latest.spo2_hb;
+        sample.spo2 = g_spo2_latest.spo2;
+        sample.spo2_confidence = g_spo2_latest.confidence;
+        sample.spo2_valid_level = g_spo2_latest.valid_level;
+        sample.spo2_invalid_flag = g_spo2_latest.invalid_flag;
+    }
 
     int ret = k_msgq_put(&g_ppg_sample_q, &sample, K_NO_WAIT);
     if (ret == -ENOMSG || ret == -EAGAIN) {
@@ -59,6 +87,23 @@ void ppg_nrf_on_hrv_result(int32_t hrv, int32_t hrv_confidence, uint32_t frame_i
     ARG_UNUSED(frame_id);
 }
 
+void ppg_nrf_on_spo2_result(int32_t spo2,
+                            int32_t spo2_hb,
+                            int32_t spo2_confidence,
+                            int32_t spo2_valid_level,
+                            int32_t spo2_invalid_flag,
+                            uint32_t frame_id)
+{
+    g_spo2_latest.spo2_hb = spo2_hb;
+    g_spo2_latest.spo2 = spo2;
+    g_spo2_latest.confidence = spo2_confidence;
+    g_spo2_latest.valid_level = spo2_valid_level;
+    g_spo2_latest.invalid_flag = spo2_invalid_flag;
+    g_spo2_latest.frame_id = frame_id;
+    g_spo2_latest.timestamp_ms = (uint32_t)k_uptime_get();
+    g_spo2_latest.valid = true;
+}
+
 static void gh3026_irq_worker(void *a, void *b, void *c)
 {
     ARG_UNUSED(a);
@@ -73,7 +118,7 @@ static void gh3026_irq_worker(void *a, void *b, void *c)
         }
 
         int64_t now_ms = k_uptime_get();
-        if ((now_ms - last_log_ms) >= 3000) {
+        if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE) && (now_ms - last_log_ms) >= 3000) {
             LOG_INF("gh3026 run: irq_count=%u int_flag=%u",
                     (unsigned int)g_ppg.irq_count,
                     (unsigned int)g_uchGh3x2xIntCallBackIsCalled);
@@ -95,7 +140,9 @@ static int ppg_nrf_init(void)
     }
 
     g_ppg.inited = true;
-    LOG_INF("gh3026 demo init ok");
+    if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
+        LOG_INF("gh3026 demo init ok");
+    }
     return HAL_OK;
 }
 
@@ -110,23 +157,26 @@ static int ppg_nrf_start(void)
 
     g_uchGh3x2xIntCallBackIsCalled = 0;
     g_ppg.irq_count = 0;
+    g_spo2_latest.valid = false;
     k_sem_reset(&g_gh_irq_sem);
     k_msgq_purge(&g_ppg_sample_q);
-    Gh3x2xDemoStartSampling(GH3X2X_FUNCTION_HR);
+    Gh3x2xDemoStartSampling(GH3X2X_FUNCTION_HR | GH3X2X_FUNCTION_SPO2);
     GU16 wm_before = GH3X2X_GetCurrentFifoWaterLine();
     GS8 wm_ret = GH3X2X_FifoWatermarkThrConfig(16);
     GU16 wm_after = GH3X2X_GetCurrentFifoWaterLine();
-    LOG_INF("gh3026 wm: before=%u set_ret=%d after=%u",
-            (unsigned int)wm_before,
-            (int)wm_ret,
-            (unsigned int)wm_after);
-    for (GU8 slot = 0; slot <= 5; slot++) {
-        GU8 drv0 = GH3X2X_GetSlotLedCurrent(slot, 0);
-        GU8 drv1 = GH3X2X_GetSlotLedCurrent(slot, 1);
-        LOG_INF("gh3026 ledcfg: slot=%u drv0=%u drv1=%u",
-                (unsigned int)slot,
-                (unsigned int)drv0,
-                (unsigned int)drv1);
+    if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
+        LOG_INF("gh3026 wm: before=%u set_ret=%d after=%u",
+                (unsigned int)wm_before,
+                (int)wm_ret,
+                (unsigned int)wm_after);
+        for (GU8 slot = 0; slot <= 5; slot++) {
+            GU8 drv0 = GH3X2X_GetSlotLedCurrent(slot, 0);
+            GU8 drv1 = GH3X2X_GetSlotLedCurrent(slot, 1);
+            LOG_INF("gh3026 ledcfg: slot=%u drv0=%u drv1=%u",
+                    (unsigned int)slot,
+                    (unsigned int)drv0,
+                    (unsigned int)drv1);
+        }
     }
 
     g_ppg.run = true;
@@ -141,7 +191,9 @@ static int ppg_nrf_start(void)
     k_thread_name_set(&g_gh_thread, "gh3026_irq");
 
     g_ppg.started = true;
-    LOG_INF("gh3026 sampling start (HR)");
+    if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
+        LOG_INF("gh3026 sampling start (HR+SPO2)");
+    }
     return HAL_OK;
 }
 
@@ -155,9 +207,12 @@ static int ppg_nrf_stop(void)
     k_thread_abort(&g_gh_thread);
     k_msgq_purge(&g_ppg_sample_q);
 
-    Gh3x2xDemoStopSampling(GH3X2X_FUNCTION_HR);
+    Gh3x2xDemoStopSampling(GH3X2X_FUNCTION_HR | GH3X2X_FUNCTION_SPO2);
     g_ppg.started = false;
-    LOG_INF("gh3026 sampling stop");
+    g_spo2_latest.valid = false;
+    if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
+        LOG_INF("gh3026 sampling stop");
+    }
     return HAL_OK;
 }
 

@@ -26,6 +26,21 @@ __attribute__((weak)) void ppg_nrf_on_hrv_result(int32_t hrv, int32_t hrv_confid
     ARG_UNUSED(frame_id);
 }
 
+__attribute__((weak)) void ppg_nrf_on_spo2_result(int32_t spo2,
+                                                  int32_t spo2_hb,
+                                                  int32_t spo2_confidence,
+                                                  int32_t spo2_valid_level,
+                                                  int32_t spo2_invalid_flag,
+                                                  uint32_t frame_id)
+{
+    ARG_UNUSED(spo2);
+    ARG_UNUSED(spo2_hb);
+    ARG_UNUSED(spo2_confidence);
+    ARG_UNUSED(spo2_valid_level);
+    ARG_UNUSED(spo2_invalid_flag);
+    ARG_UNUSED(frame_id);
+}
+
 /**
  * @fn     void GH3X2X_AlgoLog(char *log_string)
  * 
@@ -153,8 +168,25 @@ void GH3X2X_HrAlgorithmResultReport(STGh3x2xAlgoResult * pstAlgoResult, GU32 lub
 void GH3X2X_Spo2AlgorithmResultReport(STGh3x2xAlgoResult * pstAlgoResult, GU32 lubFrameId)
 {
 #if (__USE_GOODIX_SPO2_ALGORITHM__)
-
-    /* code implement by user */
+    static GU32 s_spo2_log_ms = 0;
+    GU32 now_ms = (GU32)k_uptime_get();
+    if ((now_ms - s_spo2_log_ms) >= 3000U) {
+        printk("[gh3x2x_algo]: spo2_cb upd=%u spo2=%d conf=%d lvl=%d invalid=%d spo2_hb=%d frame=%u\n",
+               (unsigned int)pstAlgoResult->uchUpdateFlag,
+               (int)pstAlgoResult->snResult[0],
+               (int)pstAlgoResult->snResult[2],
+               (int)pstAlgoResult->snResult[3],
+               (int)pstAlgoResult->snResult[5],
+               (int)pstAlgoResult->snResult[4],
+               (unsigned int)lubFrameId);
+        s_spo2_log_ms = now_ms;
+    }
+    ppg_nrf_on_spo2_result((int32_t)pstAlgoResult->snResult[0],
+                           (int32_t)pstAlgoResult->snResult[4],
+                           (int32_t)pstAlgoResult->snResult[2],
+                           (int32_t)pstAlgoResult->snResult[3],
+                           (int32_t)pstAlgoResult->snResult[5],
+                           (uint32_t)lubFrameId);
     //GOODIX_PLANFROM_SPO2_RESULT_REPORT_ENTITY();
 #endif
 }

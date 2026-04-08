@@ -12,7 +12,11 @@
 #include "hal_spk.h"
 #include "error.h"
 
+#if IS_ENABLED(CONFIG_PPG_TUNE_MODE)
+LOG_MODULE_REGISTER(spk_nrf, LOG_LEVEL_WRN);
+#else
 LOG_MODULE_REGISTER(spk_nrf, LOG_LEVEL_INF);
+#endif
 
 #define I2S_DEV_NODE DT_NODELABEL(i2s0)
 
