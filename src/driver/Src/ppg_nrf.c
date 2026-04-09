@@ -113,6 +113,9 @@ static void gh3026_irq_worker(void *a, void *b, void *c)
 
     while (g_ppg.run) {
         if (k_sem_take(&g_gh_irq_sem, K_MSEC(1000)) == 0) {
+            if (!g_ppg.run) {
+                break;
+            }
             Gh3x2xDemoInterruptProcess();
             g_ppg.irq_count++;
         }
@@ -125,6 +128,10 @@ static void gh3026_irq_worker(void *a, void *b, void *c)
             last_log_ms = now_ms;
         }
     }
+
+    /* Signal that thread has exited cleanly */
+    g_ppg.started = false;
+    LOG_INF("gh3026 irq worker exited");
 }
 
 static int ppg_nrf_init(void)
@@ -203,12 +210,28 @@ static int ppg_nrf_stop(void)
         return HAL_OK;
     }
 
+    /* Cooperative shutdown: signal thread to exit, then wait */
     g_ppg.run = false;
-    k_thread_abort(&g_gh_thread);
+    k_sem_give(&g_gh_irq_sem); /* Wake thread so it checks run flag */
+
+    /* Wait for thread to exit naturally (up to 1s) */
+    for (int i = 0; i < 50; i++) {
+        if (!g_ppg.started) {
+            break;
+        }
+        k_msleep(20);
+    }
+
+    /* If thread didn't exit in time, force abort as last resort */
+    if (g_ppg.started) {
+        LOG_WRN("gh3026 irq worker did not exit in time, forcing abort");
+        k_thread_abort(&g_gh_thread);
+        g_ppg.started = false;
+    }
+
     k_msgq_purge(&g_ppg_sample_q);
 
     Gh3x2xDemoStopSampling(GH3X2X_FUNCTION_HR | GH3X2X_FUNCTION_SPO2);
-    g_ppg.started = false;
     g_spo2_latest.valid = false;
     if (!IS_ENABLED(CONFIG_PPG_TUNE_MODE)) {
         LOG_INF("gh3026 sampling stop");

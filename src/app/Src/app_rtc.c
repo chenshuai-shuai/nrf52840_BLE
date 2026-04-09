@@ -220,11 +220,11 @@ static void mic_dsp_process(int16_t *pcm, size_t samples)
 #define SPK_FRAME_BYTES (SPK_FRAME_SAMPLES * sizeof(int16_t))
 #define SPK_ENC_FRAME_MAX 88U
 #define SPK_RING_FRAMES 256U               /* ~25 KB for ADPCM frames */
-#define SPK_HIGH_WATER_FRAMES 40U          /* ~400 ms */
-#define SPK_LOW_WATER_FRAMES 16U           /* ~160 ms */
+#define SPK_HIGH_WATER_FRAMES 64U          /* ~640 ms - enough buffer before starting I2S */
+#define SPK_LOW_WATER_FRAMES 20U           /* ~200 ms */
 #define SPK_STREAM_RATE_MIN_PM 980U        /* ~0.98x realtime */
-#define SPK_FORCE_START_FRAMES 96U         /* ~960 ms backlog */
-#define SPK_FORCE_START_WAIT_MS 700U
+#define SPK_FORCE_START_FRAMES 80U         /* ~800 ms backlog */
+#define SPK_FORCE_START_WAIT_MS 600U
 #define SPK_NO_AUDIO_START_TIMEOUT_MS 5000U
 #define SPK_STREAM_STALL_TIMEOUT_MS 2000U
 
@@ -430,6 +430,9 @@ void app_rtc_playback_critical_enter(void)
     }
     g_playback_critical = true;
 
+    /* Let the uplink thread skip TX entirely and focus on draining BLE RX */
+    app_uplink_set_rx_priority(true);
+
     g_mic_pause_req = true;
     mic_drop_queue();
     (void)hal_mic_stop();
@@ -450,6 +453,9 @@ void app_rtc_playback_critical_exit(void)
     if (!g_playback_critical) {
         return;
     }
+
+    /* Restore normal TX+RX operation */
+    app_uplink_set_rx_priority(false);
 
     if (IS_ENABLED(CONFIG_PPG_SPI_PROBE)) {
         app_ppg_hr_resume();

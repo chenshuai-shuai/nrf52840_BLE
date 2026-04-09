@@ -53,6 +53,8 @@ int spi_bus_unlock(spi_bus_client_t client)
     if (g_spi_bus_owner != client) {
         LOG_WRN("spi bus unlock by non-owner: owner=%d req=%d",
                 (int)g_spi_bus_owner, (int)client);
+        /* Refuse unlock from non-owner to prevent SPI bus corruption */
+        return -EPERM;
     }
     g_spi_bus_owner = SPI_BUS_CLIENT_OTHER;
     return k_mutex_unlock(&g_spi_bus_lock);

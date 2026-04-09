@@ -1,6 +1,8 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include <zephyr/sys/util.h>
+#include <zephyr/device.h>
+#include <zephyr/drivers/watchdog.h>
 
 #include "platform_init.h"
 #include "error.h"
@@ -81,6 +83,37 @@ int main(void)
         printk("gh3026 run start\n");
 #endif
     }
+
+    /* Hardware watchdog: auto-reset if main loop stalls */
+#if IS_ENABLED(CONFIG_WATCHDOG)
+    const struct device *const wdt = DEVICE_DT_GET(DT_NODELABEL(wdt0));
+    if (device_is_ready(wdt)) {
+        struct wdt_timeout_cfg wdt_cfg = {
+            .window.min = 0U,
+            .window.max = 8000U, /* 8 second timeout */
+            .callback = NULL,    /* system reset on timeout */
+            .flags = WDT_FLAG_RESET_SOC,
+        };
+        int wdt_channel = wdt_install_timeout(wdt, &wdt_cfg);
+        if (wdt_channel >= 0) {
+            int wdt_ret = wdt_setup(wdt, WDT_OPT_PAUSE_HALTED_BY_DBG);
+            if (wdt_ret == 0) {
+                LOG_INF("watchdog started (8s timeout, channel %d)", wdt_channel);
+                /* Keep main thread alive to feed the watchdog */
+                while (1) {
+                    wdt_feed(wdt, wdt_channel);
+                    k_sleep(K_MSEC(4000));
+                }
+            } else {
+                LOG_ERR("watchdog setup failed: %d", wdt_ret);
+            }
+        } else {
+            LOG_ERR("watchdog install timeout failed: %d", wdt_channel);
+        }
+    } else {
+        LOG_WRN("watchdog device not ready");
+    }
+#endif
 
     return 0;
 }

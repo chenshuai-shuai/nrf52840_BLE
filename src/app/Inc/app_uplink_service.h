@@ -23,6 +23,15 @@ bool app_uplink_service_is_ready(void);
 size_t app_uplink_max_payload(void);
 int app_uplink_take_downlink(app_data_record_t *out, int timeout_ms);
 
+/**
+ * @brief Set RX-priority mode for audio playback.
+ *
+ * When enabled the uplink thread skips all TX work and drains BLE RX
+ * as fast as possible so that audio packets reach the speaker ring
+ * buffer without delay.
+ */
+void app_uplink_set_rx_priority(bool enable);
+
 int app_uplink_publish(app_data_part_t part,
                        app_uplink_prio_t prio,
                        const void *payload,

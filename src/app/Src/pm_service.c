@@ -131,11 +131,19 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
 
     /* Wait for PMIC to be ready before configuring rails */
     int ret = hal_pm_init();
-    while (ret != HAL_OK) {
-        LOG_WRN("pm svc: pm init retry: %d", ret);
+    int pm_init_retries = 0;
+    while (ret != HAL_OK && pm_init_retries < 30) {
+        pm_init_retries++;
+        LOG_WRN("pm svc: pm init retry %d: %d", pm_init_retries, ret);
         g_pm_svc_last_error = ret;
         k_msleep(200);
         ret = hal_pm_init();
+    }
+    if (ret != HAL_OK) {
+        LOG_ERR("pm svc: pm init failed after %d retries: %d", pm_init_retries, ret);
+        g_pm_svc_last_error = ret;
+        g_pm_svc_ready = false;
+        return;
     }
 
     k_msleep(200);

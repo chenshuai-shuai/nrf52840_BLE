@@ -10,7 +10,7 @@
 
 LOG_MODULE_REGISTER(app_bus, LOG_LEVEL_WRN);
 
-#define APP_BUS_STACK_SIZE 1536
+#define APP_BUS_STACK_SIZE 2048
 #define APP_BUS_PRIORITY   9
 #define APP_BUS_QUEUE_LEN  16
 #define APP_BUS_MAX_SUBS   8
@@ -127,6 +127,7 @@ int app_bus_publish(const app_event_t *evt)
 
     app_event_t drop_evt;
     if (k_msgq_get(&g_app_bus_q, &drop_evt, K_NO_WAIT) == 0) {
+        LOG_WRN("app bus: queue full, dropped event id=%d", (int)drop_evt.id);
         ret = k_msgq_put(&g_app_bus_q, evt, K_NO_WAIT);
         if (ret == 0) {
             return HAL_OK;

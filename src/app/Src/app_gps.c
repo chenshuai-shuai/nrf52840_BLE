@@ -136,9 +136,17 @@ static void gps_app_entry(void *p1, void *p2, void *p3)
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
 
-    int ret = hal_gps_init();
+    int ret = HAL_EIO;
+    for (int attempt = 0; attempt < 10; attempt++) {
+        ret = hal_gps_init();
+        if (ret == HAL_OK) {
+            break;
+        }
+        LOG_WRN("gps app: hal_gps_init retry %d: %d", attempt + 1, ret);
+        k_msleep(500);
+    }
     if (ret != HAL_OK) {
-        LOG_ERR("gps app: hal_gps_init failed: %d", ret);
+        LOG_ERR("gps app: hal_gps_init failed after retries: %d", ret);
         return;
     }
 

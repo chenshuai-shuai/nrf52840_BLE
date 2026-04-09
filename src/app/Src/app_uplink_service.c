@@ -13,7 +13,7 @@ LOG_MODULE_REGISTER(app_uplink, LOG_LEVEL_WRN);
 #define APP_UPLINK_STACK_SIZE 2560
 #define APP_UPLINK_PRIORITY   5
 #define APP_UPLINK_Q_LEN      32
-#define APP_DOWNLINK_Q_LEN    32
+#define APP_DOWNLINK_Q_LEN    64
 #define APP_DOWNLINK_RX_BURST 48
 #define APP_UPLINK_IDLE_SLEEP_MS 1
 #define APP_UPLINK_MIN_ATT_MTU 23
@@ -47,6 +47,7 @@ K_MSGQ_DEFINE(g_downlink_q, sizeof(app_downlink_item_t), APP_DOWNLINK_Q_LEN, 4);
 
 static volatile bool g_uplink_started;
 static volatile bool g_uplink_ready;
+static volatile bool g_uplink_rx_priority;
 K_MUTEX_DEFINE(g_uplink_tx_lock);
 
 static size_t uplink_max_payload_bytes(void)
@@ -255,6 +256,14 @@ static void uplink_thread_entry(void *p1, void *p2, void *p3)
 
         uint32_t drained = poll_downlink_burst(&recv_ok, &recv_drop);
 
+        /* RX-priority mode: skip all TX work to maximise audio RX throughput */
+        if (g_uplink_rx_priority) {
+            if (drained == 0U) {
+                k_msleep(1);
+            }
+            continue;
+        }
+
         if (!have_item) {
             if (!dequeue_item(&item)) {
                 if (drained == 0U) {
@@ -375,6 +384,11 @@ int app_uplink_service_stop(void)
     return HAL_ENOTSUP;
 }
 
+void app_uplink_set_rx_priority(bool enable)
+{
+    g_uplink_rx_priority = enable;
+}
+
 bool app_uplink_service_is_ready(void)
 {
     return g_uplink_ready && (hal_ble_is_ready() ? true : false);
@@ -419,7 +433,10 @@ int app_uplink_publish(app_data_part_t part,
     }
 
     app_uplink_item_t item;
-    k_mutex_lock(&g_uplink_tx_lock, K_FOREVER);
+    int lret = k_mutex_lock(&g_uplink_tx_lock, K_MSEC(50));
+    if (lret != 0) {
+        return HAL_EBUSY;
+    }
     struct k_msgq *q = queue_of_prio(prio);
     if (k_msgq_num_free_get(q) == 0U) {
         k_mutex_unlock(&g_uplink_tx_lock);
@@ -455,7 +472,10 @@ int app_uplink_publish_batch(app_data_part_t part,
     size_t max_payload = app_uplink_max_payload();
     app_uplink_item_t items[APP_UPLINK_BATCH_MAX];
 
-    k_mutex_lock(&g_uplink_tx_lock, K_FOREVER);
+    int lret = k_mutex_lock(&g_uplink_tx_lock, K_MSEC(100));
+    if (lret != 0) {
+        return HAL_EBUSY;
+    }
 
     uint32_t free_slots = (uint32_t)k_msgq_num_free_get(q);
     if (free_slots < (uint32_t)count) {

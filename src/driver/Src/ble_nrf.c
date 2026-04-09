@@ -13,7 +13,7 @@
 #include "driver_stats.h"
 
 #define BLE_RX_MAX_LEN 244
-#define BLE_RX_Q_LEN 32
+#define BLE_RX_Q_LEN 64
 
 LOG_MODULE_REGISTER(ble_nrf, LOG_LEVEL_WRN);
 
@@ -345,6 +345,7 @@ static void ble_disconnected(struct bt_conn *conn, uint8_t reason)
     g_notify_enabled = false;
     g_att_mtu = 0;
     g_last_param_req_ms = 0;
+    k_msgq_purge(&g_ble_rx_q);
     driver_stats_record_ok(&g_ble_stats);
 }
 
