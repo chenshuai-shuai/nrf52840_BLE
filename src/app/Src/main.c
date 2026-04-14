@@ -15,10 +15,21 @@
 #include "spi_bus_arbiter.h"
 #include "app_spk_diag.h"
 #include "app_ppg_gpio_test.h"
+#include "app_wifi_boot_ctrl.h"
 
 #include <zephyr/logging/log.h>
 
 LOG_MODULE_REGISTER(app_main, LOG_LEVEL_WRN);
+
+static int start_pm_baseline(const char *tag)
+{
+    int ret = app_lifecycle_start(APP_LC_PM);
+    if (ret != HAL_OK) {
+        printk("%s pm start failed: %d\n", tag, ret);
+        return ret;
+    }
+    return HAL_OK;
+}
 
 int main(void)
 {
@@ -38,7 +49,12 @@ int main(void)
     }
 
 #if IS_ENABLED(CONFIG_SPK_TEST)
-    /* Speaker isolated test mode: do not start PM/MIC/BLE/PPG/IMU apps. */
+    ret = start_pm_baseline("spk_test");
+    if (ret != HAL_OK) {
+        return ret;
+    }
+
+    /* Speaker isolated test mode on top of PM baseline. */
     (void)app_spk_diag_start();
     printk("spk_test isolated mode\n");
     return 0;
@@ -46,9 +62,8 @@ int main(void)
 
 #if IS_ENABLED(CONFIG_TEMP_TEST_ISOLATED)
     /* Temperature isolated test mode: only bring up PM and TMP119. */
-    ret = app_lifecycle_start(APP_LC_PM);
+    ret = start_pm_baseline("temp_test");
     if (ret != HAL_OK) {
-        printk("temp_test pm start failed: %d\n", ret);
         return ret;
     }
 
@@ -74,9 +89,8 @@ int main(void)
 #endif
 
 #if IS_ENABLED(CONFIG_BOOT_TONE_ISOLATED)
-    ret = app_lifecycle_start(APP_LC_PM);
+    ret = start_pm_baseline("boot_tone");
     if (ret != HAL_OK) {
-        printk("boot_tone pm start failed: %d\n", ret);
         return ret;
     }
 
@@ -86,9 +100,8 @@ int main(void)
 #endif
 
 #if IS_ENABLED(CONFIG_IMU_TEST_ISOLATED)
-    ret = app_lifecycle_start(APP_LC_PM);
+    ret = start_pm_baseline("imu_test");
     if (ret != HAL_OK) {
-        printk("imu_test pm start failed: %d\n", ret);
         return ret;
     }
 
@@ -103,9 +116,8 @@ int main(void)
 #endif
 
 #if IS_ENABLED(CONFIG_PPG_TEST_ISOLATED)
-    ret = app_lifecycle_start(APP_LC_PM);
+    ret = start_pm_baseline("ppg_test");
     if (ret != HAL_OK) {
-        printk("ppg_test pm start failed: %d\n", ret);
         return ret;
     }
 
@@ -120,14 +132,29 @@ int main(void)
 #endif
 
 #if IS_ENABLED(CONFIG_PPG_GPIO_TEST)
-    ret = app_lifecycle_start(APP_LC_PM);
+    ret = start_pm_baseline("ppg_gpio_test");
     if (ret != HAL_OK) {
-        printk("ppg_gpio_test pm start failed: %d\n", ret);
         return ret;
     }
 
     app_ppg_gpio_test_start();
     printk("ppg_gpio_test isolated mode\n");
+    return 0;
+#endif
+
+#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
+    ret = start_pm_baseline("wifi_boot_ctrl");
+    if (ret != HAL_OK) {
+        return ret;
+    }
+
+    ret = app_wifi_boot_ctrl_start();
+    if (ret != HAL_OK) {
+        printk("wifi_boot_ctrl start failed: %d\n", ret);
+        return ret;
+    }
+
+    printk("wifi_boot_ctrl isolated mode\n");
     return 0;
 #endif
 

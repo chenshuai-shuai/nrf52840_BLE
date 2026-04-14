@@ -69,6 +69,11 @@ if(CONFIG_PPG_GPIO_TEST)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_ppg_gpio_test.c
   )
 endif()
+if(CONFIG_WIFI_BOOT_CTRL)
+  list(APPEND APP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_wifi_boot_ctrl.c
+  )
+endif()
 
 set(COMMON_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/common/Src

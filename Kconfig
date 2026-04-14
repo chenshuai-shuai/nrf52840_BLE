@@ -150,6 +150,23 @@ config DRIVER_TEMP_NRF
 	help
 	  Enable TMP119 software-I2C temperature driver implementation.
 
+config WIFI_BOOT_CTRL
+	bool "Enable ESP32-C3 boot mode control service"
+	default n
+	depends on GPIO
+	depends on SERIAL
+	help
+	  Enable a small nRF-side helper that watches the shared ESP UART RX line
+	  for host-side control commands and toggles the ESP32-C3 BOOT/EN pins.
+
+config WIFI_BOOT_CTRL_ISOLATED
+	bool "Enable isolated ESP32-C3 boot control test mode"
+	default n
+	depends on WIFI_BOOT_CTRL
+	help
+	  Start only the ESP32-C3 boot control helper at boot so RTT output stays
+	  focused on download-mode and normal-boot switching verification.
+
 config IMU_USE_FIFO
 	bool "Enable ICM42688 FIFO sampling path"
 	default y
