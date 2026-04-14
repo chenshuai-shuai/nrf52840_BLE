@@ -154,10 +154,7 @@
 };
 
 &i2s0 {
-    status = "okay";
-    clock-source = "PCLK32M";
-    pinctrl-0 = <&i2s0_default>;
-    pinctrl-names = "default";
+    status = "disabled";
 };
 
 &i2c0 {

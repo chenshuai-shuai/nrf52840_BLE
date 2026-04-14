@@ -143,6 +143,14 @@ int main(void)
 #endif
 
 #if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
+    app_bus_set_drop_log_enabled(false);
+
+    ret = app_wifi_boot_ctrl_prepare();
+    if (ret != HAL_OK) {
+        printk("wifi_boot_ctrl prepare failed: %d\n", ret);
+        return ret;
+    }
+
     ret = start_pm_baseline("wifi_boot_ctrl");
     if (ret != HAL_OK) {
         return ret;

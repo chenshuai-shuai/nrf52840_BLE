@@ -39,6 +39,7 @@ typedef void (*app_event_cb_t)(const app_event_t *evt, void *user);
 int app_bus_start(void);
 int app_bus_subscribe(app_event_id_t id, app_event_cb_t cb, void *user);
 int app_bus_publish(const app_event_t *evt);
+void app_bus_set_drop_log_enabled(bool enabled);
 
 #ifdef __cplusplus
 }

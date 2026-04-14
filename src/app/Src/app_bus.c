@@ -22,6 +22,7 @@ typedef struct {
 
 typedef struct {
     bool started;
+    bool drop_log_enabled;
     struct k_thread thread;
     struct k_mutex lock;
     app_bus_sub_t subs[APP_EVT_COUNT][APP_BUS_MAX_SUBS];
@@ -75,6 +76,7 @@ int app_bus_start(void)
     }
 
     memset(&g_bus, 0, sizeof(g_bus));
+    g_bus.drop_log_enabled = true;
     k_mutex_init(&g_bus.lock);
 
     int ret = rt_thread_start(&g_bus.thread,
@@ -127,7 +129,9 @@ int app_bus_publish(const app_event_t *evt)
 
     app_event_t drop_evt;
     if (k_msgq_get(&g_app_bus_q, &drop_evt, K_NO_WAIT) == 0) {
-        LOG_WRN("app bus: queue full, dropped event id=%d", (int)drop_evt.id);
+        if (g_bus.drop_log_enabled) {
+            LOG_WRN("app bus: queue full, dropped event id=%d", (int)drop_evt.id);
+        }
         ret = k_msgq_put(&g_app_bus_q, evt, K_NO_WAIT);
         if (ret == 0) {
             return HAL_OK;
@@ -135,4 +139,9 @@ int app_bus_publish(const app_event_t *evt)
     }
 
     return HAL_EIO;
+}
+
+void app_bus_set_drop_log_enabled(bool enabled)
+{
+    g_bus.drop_log_enabled = enabled;
 }
