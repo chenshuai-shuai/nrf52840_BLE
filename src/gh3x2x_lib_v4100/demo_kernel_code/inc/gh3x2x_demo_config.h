@@ -27,9 +27,9 @@
 #define __GS_GYRO_ENABLE__                  (0)        /*Gyro enable*/
 #define __GS_NONSYNC_READ_EN__              (0)
 #if __GS_NONSYNC_READ_EN__
-#define __GS_SAMPLE_RATE_HZ__               (25)        /*gsenor sample rate(Hz)*/
-#define __GS_READ_POINT_NUM__               (6)         /* host read gsensor sample num in one time */
-#define __GS_READ_POINT_NUM_JITTER__        (3)         /* host read gsensor sample num jitter */
+#define __GS_SAMPLE_RATE_HZ__               (100)       /* gsensor sample rate(Hz), aligned to IMU ODR */
+#define __GS_READ_POINT_NUM__               (24)        /* host read gsensor sample num in one time */
+#define __GS_READ_POINT_NUM_JITTER__        (4)         /* host read gsensor sample num jitter */
 #endif
 
 #define __CAP_ENABLE__                      (0)         /*Cap enable*/

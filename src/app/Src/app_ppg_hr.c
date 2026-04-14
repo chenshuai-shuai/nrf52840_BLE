@@ -13,7 +13,11 @@
 #include "gh3x2x_demo_algo_call.h"
 #include "goodix_hba.h"
 
+#if IS_ENABLED(CONFIG_PPG_SPI_PROBE)
+LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
+#else
 LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_WRN);
+#endif
 
 #define APP_PPG_HR_STACK_SIZE 3072
 #define APP_PPG_HR_PRIORITY   7
@@ -661,6 +665,16 @@ int app_ppg_hr_start(void)
     if (g_ppg_hr_started) {
         return HAL_OK;
     }
+
+#if IS_ENABLED(CONFIG_HAL_IMU) && IS_ENABLED(CONFIG_DRIVER_IMU_NRF)
+    /* PPG uses IMU as gsensor input and scene reference, but we keep it
+     * single-threaded here to avoid SPI bus contention during bring-up. */
+    int imu_ret = hal_imu_init();
+    if ((imu_ret != HAL_OK) && (imu_ret != HAL_EBUSY)) {
+        LOG_ERR("imu init for ppg failed: %d", imu_ret);
+        return imu_ret;
+    }
+#endif
 
     int ret = hal_ppg_init();
     if (ret != HAL_OK) {

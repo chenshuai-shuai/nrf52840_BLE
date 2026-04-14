@@ -14,6 +14,7 @@
 #include "app_db.h"
 #include "spi_bus_arbiter.h"
 #include "app_spk_diag.h"
+#include "app_ppg_gpio_test.h"
 
 #include <zephyr/logging/log.h>
 
@@ -61,11 +62,85 @@ int main(void)
     return 0;
 #endif
 
+#if IS_ENABLED(CONFIG_PM_TEST_ISOLATED)
+    ret = app_lifecycle_start(APP_LC_PM_TEST);
+    if (ret != HAL_OK) {
+        printk("pm_test start failed: %d\n", ret);
+        return ret;
+    }
+
+    printk("pm_test isolated mode\n");
+    return 0;
+#endif
+
+#if IS_ENABLED(CONFIG_BOOT_TONE_ISOLATED)
+    ret = app_lifecycle_start(APP_LC_PM);
+    if (ret != HAL_OK) {
+        printk("boot_tone pm start failed: %d\n", ret);
+        return ret;
+    }
+
+    printk("boot_tone isolated mode\n");
+    boot_tone_play();
+    return 0;
+#endif
+
+#if IS_ENABLED(CONFIG_IMU_TEST_ISOLATED)
+    ret = app_lifecycle_start(APP_LC_PM);
+    if (ret != HAL_OK) {
+        printk("imu_test pm start failed: %d\n", ret);
+        return ret;
+    }
+
+    ret = app_lifecycle_start(APP_LC_IMU);
+    if (ret != HAL_OK) {
+        printk("imu_test start failed: %d\n", ret);
+        return ret;
+    }
+
+    printk("imu_test isolated mode\n");
+    return 0;
+#endif
+
+#if IS_ENABLED(CONFIG_PPG_TEST_ISOLATED)
+    ret = app_lifecycle_start(APP_LC_PM);
+    if (ret != HAL_OK) {
+        printk("ppg_test pm start failed: %d\n", ret);
+        return ret;
+    }
+
+    ret = app_lifecycle_start(APP_LC_PPG);
+    if (ret != HAL_OK) {
+        printk("ppg_test start failed: %d\n", ret);
+        return ret;
+    }
+
+    printk("ppg_test isolated mode\n");
+    return 0;
+#endif
+
+#if IS_ENABLED(CONFIG_PPG_GPIO_TEST)
+    ret = app_lifecycle_start(APP_LC_PM);
+    if (ret != HAL_OK) {
+        printk("ppg_gpio_test pm start failed: %d\n", ret);
+        return ret;
+    }
+
+    app_ppg_gpio_test_start();
+    printk("ppg_gpio_test isolated mode\n");
+    return 0;
+#endif
+
 #if IS_ENABLED(CONFIG_BOOT_TONE)
     /* Bring up PM first so speaker/amp rails are stable before boot tone. */
     (void)app_lifecycle_start(APP_LC_PM);
     boot_tone_play();
 #endif
+
+    /* Restore normal runtime path while keeping still-untested modules disabled. */
+    (void)app_lifecycle_set_enabled(APP_LC_TEMP, false);
+    (void)app_lifecycle_set_enabled(APP_LC_GPS, false);
+    (void)app_lifecycle_set_enabled(APP_LC_PM_TEST, false);
 
     ret = app_lifecycle_start_all();
     if (ret != HAL_OK) {

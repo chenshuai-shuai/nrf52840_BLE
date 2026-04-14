@@ -8,7 +8,13 @@
 #include "gh3x2x_demo.h"
 #include "gh3x2x_drv.h"
 
+extern void gh3x2x_port_dump_state(const char *tag);
+
+#if IS_ENABLED(CONFIG_PPG_SPI_PROBE)
+LOG_MODULE_REGISTER(ppg_nrf, LOG_LEVEL_INF);
+#else
 LOG_MODULE_REGISTER(ppg_nrf, LOG_LEVEL_WRN);
+#endif
 
 #define GH3026_THREAD_STACK_SIZE 4096
 #define GH3026_THREAD_PRIORITY   6
@@ -140,8 +146,10 @@ static int ppg_nrf_init(void)
         return HAL_OK;
     }
 
+    gh3x2x_port_dump_state("ppg_pre_init");
     int ret = Gh3x2xDemoInit();
     if (ret != GH3X2X_RET_OK) {
+        gh3x2x_port_dump_state("ppg_init_fail");
         LOG_ERR("gh3026 init failed: %d", ret);
         return HAL_EIO;
     }

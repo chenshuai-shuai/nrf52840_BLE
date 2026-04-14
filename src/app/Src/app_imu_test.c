@@ -13,7 +13,11 @@
 #include "invn_algo_agm.h"
 #include "rt_thread.h"
 
+#if IS_ENABLED(CONFIG_IMU_TEST_ISOLATED)
+LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_INF);
+#else
 LOG_MODULE_REGISTER(app_imu_test, LOG_LEVEL_WRN);
+#endif
 
 #define IMU_TEST_STACK_SIZE 3072
 #define IMU_TEST_PRIORITY   8
@@ -304,7 +308,9 @@ static void imu_test_entry(void *p1, void *p2, void *p3)
     ARG_UNUSED(p2);
     ARG_UNUSED(p3);
 
+#if IS_ENABLED(CONFIG_IMU_TEST_ISOLATED)
     printk("imu test: thread entry\n");
+#endif
     LOG_INF("imu test: init");
     int ret = hal_imu_init();
     if (ret != HAL_OK) {

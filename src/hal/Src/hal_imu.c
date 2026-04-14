@@ -54,3 +54,29 @@ int hal_imu_get_latest_us(imu_sample_t *out, uint64_t *timestamp_us)
     }
     return g_imu_ops->get_latest_us(out, timestamp_us);
 }
+
+int hal_imu_cache_start(void)
+{
+    if (g_imu_ops == NULL || g_imu_ops->cache_start == NULL) {
+        return HAL_ENOTSUP;
+    }
+    return g_imu_ops->cache_start();
+}
+
+int hal_imu_cache_stop(void)
+{
+    if (g_imu_ops == NULL || g_imu_ops->cache_stop == NULL) {
+        return HAL_ENOTSUP;
+    }
+    return g_imu_ops->cache_stop();
+}
+
+int hal_imu_cache_read(imu_sample_t *samples,
+                       uint64_t *timestamps_us,
+                       size_t *inout_count)
+{
+    if (g_imu_ops == NULL || g_imu_ops->cache_read == NULL) {
+        return HAL_ENOTSUP;
+    }
+    return g_imu_ops->cache_read(samples, timestamps_us, inout_count);
+}

@@ -23,6 +23,11 @@ typedef struct {
     int (*read_timed)(void *buf, size_t len, uint64_t *timestamp_us, int timeout_ms);
     int (*get_latest)(imu_sample_t *out, uint32_t *timestamp_ms);
     int (*get_latest_us)(imu_sample_t *out, uint64_t *timestamp_us);
+    int (*cache_start)(void);
+    int (*cache_stop)(void);
+    int (*cache_read)(imu_sample_t *samples,
+                      uint64_t *timestamps_us,
+                      size_t *inout_count);
 } hal_imu_ops_t;
 
 int hal_imu_register(const hal_imu_ops_t *ops);
@@ -31,6 +36,11 @@ int hal_imu_read(void *buf, size_t len, int timeout_ms);
 int hal_imu_read_timed(void *buf, size_t len, uint64_t *timestamp_us, int timeout_ms);
 int hal_imu_get_latest(imu_sample_t *out, uint32_t *timestamp_ms);
 int hal_imu_get_latest_us(imu_sample_t *out, uint64_t *timestamp_us);
+int hal_imu_cache_start(void);
+int hal_imu_cache_stop(void);
+int hal_imu_cache_read(imu_sample_t *samples,
+                       uint64_t *timestamps_us,
+                       size_t *inout_count);
 
 #ifdef __cplusplus
 }

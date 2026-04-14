@@ -86,6 +86,22 @@ config PPG_SPI_PROBE
 	help
 	  Run a minimal GH3026 SPI link probe during boot by calling hal_ppg_init().
 
+config PPG_TEST_ISOLATED
+	bool "Enable PPG isolated bring-up mode"
+	default n
+	depends on PPG_SPI_PROBE
+	help
+	  Start only the PMIC service, IMU helper path and PPG test path at boot so
+	  RTT output stays focused on PPG bring-up on new hardware.
+
+config PPG_GPIO_TEST
+	bool "Enable PPG GPIO bare-metal bring-up mode"
+	default n
+	depends on GPIO
+	help
+	  Disable Goodix driver bring-up and only toggle the dedicated PPG GPIOs
+	  (CS/RST/INT) so board-level wiring can be verified without SPI traffic.
+
 config PPG_GH_VERBOSE_LOG
 	bool "Enable GH3026 library verbose log"
 	default n
@@ -369,6 +385,17 @@ config BOOT_TONE
 	help
 	  Play a short boot tone once at startup.
 
+config BOOT_TONE_ISOLATED
+	bool "Enable isolated boot tone bring-up mode"
+	default n
+	depends on BOOT_TONE
+	depends on HAL_PM
+	depends on DRIVER_PM_NRF
+	help
+	  Start only PM and play the boot tone once at boot, without launching
+	  other application modules. Use this to verify the speaker path on new
+	  hardware with minimal system interference.
+
 config IMU_TEST
 	bool "Enable IMU test thread"
 	default n
@@ -376,6 +403,14 @@ config IMU_TEST
 	depends on DRIVER_IMU_NRF
 	help
 	  Enable IMU test thread for driver validation.
+
+config IMU_TEST_ISOLATED
+	bool "Enable IMU isolated bring-up mode"
+	default n
+	depends on IMU_TEST
+	help
+	  Start only the PMIC service and IMU test path at boot so RTT output stays
+	  focused on IMU bring-up on new hardware.
 
 config IMU_TDK_AGM
 	bool "Enable TDK AGM 6-axis fusion on nRF"
@@ -410,6 +445,14 @@ config PM_TEST
 	depends on DRIVER_PM_NRF
 	help
 	  Enable PMIC test thread for driver validation.
+
+config PM_TEST_ISOLATED
+	bool "Enable PMIC isolated bring-up mode"
+	default n
+	depends on PM_TEST
+	help
+	  Start only the PMIC test path at boot so RTT output stays focused on
+	  battery, charger and LED behaviour validation on new hardware.
 
 config TEMP_TEST
 	bool "Enable TMP119 test thread"

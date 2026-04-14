@@ -1663,8 +1663,10 @@ static int ble_ensure_started(void)
 void app_rtc_init(void)
 {
     app_state_init(AUDIO_MODE_BOOT);
+#ifdef CONFIG_SPK_STREAM
     k_mutex_init(&g_spk_ring_lock);
     spk_ring_reset();
+#endif
 
     LOG_INF("Build: DOWNLINK_TEST=%d MIC_TEST=%d SPK_STREAM=%d",
             DOWNLINK_TEST,

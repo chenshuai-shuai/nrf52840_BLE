@@ -64,6 +64,11 @@ if(CONFIG_SPK_TEST)
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_spk_diag.c
   )
 endif()
+if(CONFIG_PPG_GPIO_TEST)
+  list(APPEND APP_SOURCES
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_ppg_gpio_test.c
+  )
+endif()
 
 set(COMMON_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/common/Src

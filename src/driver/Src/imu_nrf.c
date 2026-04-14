@@ -14,7 +14,11 @@
 #include "error.h"
 #include "spi_bus_arbiter.h"
 
+#if IS_ENABLED(CONFIG_IMU_TEST_ISOLATED)
+LOG_MODULE_REGISTER(imu_nrf, LOG_LEVEL_INF);
+#else
 LOG_MODULE_REGISTER(imu_nrf, LOG_LEVEL_WRN);
+#endif
 
 #define IMU_NODE DT_NODELABEL(imu)
 #if !DT_NODE_HAS_STATUS(IMU_NODE, okay)
@@ -54,6 +58,7 @@ LOG_MODULE_REGISTER(imu_nrf, LOG_LEVEL_WRN);
 #define IMU_FIFO_PACKET_SIZE   FIFO_16BYTES_PACKET_SIZE
 #define IMU_FIFO_BATCH_PACKETS 8U
 #define IMU_SAMPLE_PERIOD_US   10000U
+#define IMU_CACHE_RING_CAP     128U
 
 typedef struct {
     imu_sample_t sample;
@@ -88,6 +93,12 @@ static struct {
     uint8_t fifo_ridx;
     uint8_t fifo_widx;
     uint8_t fifo_count;
+    struct k_mutex cache_lock;
+    bool cache_enabled;
+    imu_fifo_sample_t cache_ring[IMU_CACHE_RING_CAP];
+    uint16_t cache_ridx;
+    uint16_t cache_widx;
+    uint16_t cache_count;
 } g_imu;
 
 K_SEM_DEFINE(g_imu_drdy_sem, 0, 1);
@@ -96,6 +107,30 @@ static struct gpio_callback g_imu_int_cb;
 static int imu_reg_write_cfg(const struct spi_config *cfg, uint8_t reg, uint8_t val);
 static int imu_reg_read_block_cfg(const struct spi_config *cfg, uint8_t reg, uint8_t *buf, size_t len);
 static int imu_reg_read_cfg(const struct spi_config *cfg, uint8_t reg, uint8_t *val);
+
+static void imu_cache_push(const imu_sample_t *sample, uint64_t ts_us)
+{
+    if ((sample == NULL) || !g_imu.cache_enabled) {
+        return;
+    }
+
+    k_mutex_lock(&g_imu.cache_lock, K_FOREVER);
+    if (!g_imu.cache_enabled) {
+        k_mutex_unlock(&g_imu.cache_lock);
+        return;
+    }
+
+    if (g_imu.cache_count == IMU_CACHE_RING_CAP) {
+        g_imu.cache_ridx = (uint16_t)((g_imu.cache_ridx + 1U) % IMU_CACHE_RING_CAP);
+        g_imu.cache_count--;
+    }
+
+    g_imu.cache_ring[g_imu.cache_widx].sample = *sample;
+    g_imu.cache_ring[g_imu.cache_widx].ts_us = ts_us;
+    g_imu.cache_widx = (uint16_t)((g_imu.cache_widx + 1U) % IMU_CACHE_RING_CAP);
+    g_imu.cache_count++;
+    k_mutex_unlock(&g_imu.cache_lock);
+}
 
 static void imu_store_latest(const imu_sample_t *sample, uint64_t ts_us)
 {
@@ -175,6 +210,7 @@ static void imu_fifo_ring_push(const imu_sample_t *sample, uint64_t ts_us)
     g_imu.fifo_widx = (uint8_t)((g_imu.fifo_widx + 1U) % CONFIG_IMU_FIFO_SAMPLE_RING_CAP);
     g_imu.fifo_count++;
     imu_store_latest(sample, ts_us);
+    imu_cache_push(sample, ts_us);
 }
 
 static bool imu_fifo_ring_pop(imu_sample_t *sample, uint64_t *ts_us)
@@ -467,6 +503,7 @@ static int imu_direct_read_sample(imu_sample_t *sample, uint64_t *sample_ts_us)
         .gyro_z = (int16_t)((raw[12] << 8) | raw[13]),
     };
     imu_store_latest(sample, *sample_ts_us);
+    imu_cache_push(sample, *sample_ts_us);
     return HAL_OK;
 }
 
@@ -688,12 +725,66 @@ static int imu_nrf_get_latest_us(imu_sample_t *out, uint64_t *timestamp_us)
     return HAL_OK;
 }
 
+static int imu_nrf_cache_start(void)
+{
+    k_mutex_lock(&g_imu.cache_lock, K_FOREVER);
+    g_imu.cache_enabled = true;
+    g_imu.cache_ridx = 0U;
+    g_imu.cache_widx = 0U;
+    g_imu.cache_count = 0U;
+    k_mutex_unlock(&g_imu.cache_lock);
+    return HAL_OK;
+}
+
+static int imu_nrf_cache_stop(void)
+{
+    k_mutex_lock(&g_imu.cache_lock, K_FOREVER);
+    g_imu.cache_enabled = false;
+    g_imu.cache_ridx = 0U;
+    g_imu.cache_widx = 0U;
+    g_imu.cache_count = 0U;
+    k_mutex_unlock(&g_imu.cache_lock);
+    return HAL_OK;
+}
+
+static int imu_nrf_cache_read(imu_sample_t *samples,
+                              uint64_t *timestamps_us,
+                              size_t *inout_count)
+{
+    size_t max_count;
+    size_t out_count = 0U;
+
+    if ((samples == NULL) || (inout_count == NULL) || (*inout_count == 0U)) {
+        return HAL_EINVAL;
+    }
+
+    max_count = *inout_count;
+
+    k_mutex_lock(&g_imu.cache_lock, K_FOREVER);
+    while ((out_count < max_count) && (g_imu.cache_count > 0U)) {
+        samples[out_count] = g_imu.cache_ring[g_imu.cache_ridx].sample;
+        if (timestamps_us != NULL) {
+            timestamps_us[out_count] = g_imu.cache_ring[g_imu.cache_ridx].ts_us;
+        }
+        g_imu.cache_ridx = (uint16_t)((g_imu.cache_ridx + 1U) % IMU_CACHE_RING_CAP);
+        g_imu.cache_count--;
+        out_count++;
+    }
+    k_mutex_unlock(&g_imu.cache_lock);
+
+    *inout_count = out_count;
+    return HAL_OK;
+}
+
 static const hal_imu_ops_t g_imu_ops = {
     .init = imu_nrf_init,
     .read = imu_nrf_read,
     .read_timed = imu_nrf_read_timed,
     .get_latest = imu_nrf_get_latest,
     .get_latest_us = imu_nrf_get_latest_us,
+    .cache_start = imu_nrf_cache_start,
+    .cache_stop = imu_nrf_cache_stop,
+    .cache_read = imu_nrf_cache_read,
 };
 
 int imu_nrf_register(void)
@@ -701,6 +792,7 @@ int imu_nrf_register(void)
     static bool lock_inited;
     if (!lock_inited) {
         k_mutex_init(&g_imu.latest_lock);
+        k_mutex_init(&g_imu.cache_lock);
         lock_inited = true;
     }
     return hal_imu_register(&g_imu_ops);

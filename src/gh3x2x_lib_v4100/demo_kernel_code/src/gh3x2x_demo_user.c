@@ -10,6 +10,7 @@
  */
 
 /* includes */
+#include <errno.h>
 #include "stdint.h"
 #include "string.h"
 #include "gh3x2x_drv.h"
@@ -52,6 +53,30 @@ struct gh3x2x_dev_info
 static struct gh3x2x_dev_info gh3x2x_info;
 static const struct device * const g_gh_spi_dev = DEVICE_DT_GET(DT_NODELABEL(spi1));
 static const struct device * const g_gh_gpio_dev = DEVICE_DT_GET(DT_NODELABEL(gpio0));
+
+static int gh3x2x_pin_level(const struct device *dev, gpio_pin_t pin)
+{
+    if (dev == NULL || !device_is_ready(dev)) {
+        return -ENODEV;
+    }
+    return gpio_pin_get(dev, pin);
+}
+
+void gh3x2x_port_dump_state(const char *tag)
+{
+    int cs = gh3x2x_pin_level(gh3x2x_info.spi_cs_dev, SPI_CS_PIN);
+    int irq = gh3x2x_pin_level(gh3x2x_info.spi_int_dev, SPI_INT_PIN);
+    int rst = gh3x2x_pin_level(gh3x2x_info.spi_rst_dev, SPI_RST_PIN);
+
+    printk("gh3026 hw[%s]: cs=P0.%02u=%d int=P0.%02u=%d rst=P0.%02u=%d spi=%s freq=%u op=0x%x\n",
+           (tag != NULL) ? tag : "?",
+           (unsigned int)SPI_CS_PIN, cs,
+           (unsigned int)SPI_INT_PIN, irq,
+           (unsigned int)SPI_RST_PIN, rst,
+           (gh3x2x_info.spi_dev != NULL) ? gh3x2x_info.spi_dev->name : "null",
+           (unsigned int)spi_cfg_single.frequency,
+           (unsigned int)spi_cfg_single.operation);
+}
 
 #if ( __GH3X2X_INTERFACE__ == __GH3X2X_INTERFACE_I2C__ )
 
@@ -155,7 +180,7 @@ void hal_gh3x2x_spi_init(void)
         printk("Failed to init spi1\n");
         return;
     }
-    spi_cfg_single.frequency = 4000000U;
+    spi_cfg_single.frequency = 1000000U;
     spi_cfg_single.operation = SPI_OP_MODE_MASTER | SPI_TRANSFER_MSB
 		                     | SPI_WORD_SET(8);
     spi_cfg_single.slave = 0;
@@ -167,7 +192,13 @@ void hal_gh3x2x_spi_init(void)
         return;
     }
     gpio_pin_configure(gh3x2x_info.spi_cs_dev, SPI_CS_PIN, GPIO_OUTPUT_HIGH);
-    printk("spi init end!\n");
+    printk("gh3026 spi init: spi1 sck=P0.24 mosi=P0.13 miso=P0.20 cs=P0.%02u int=P0.%02u rst=P0.%02u freq=%uHz op=0x%x\n",
+           (unsigned int)SPI_CS_PIN,
+           (unsigned int)SPI_INT_PIN,
+           (unsigned int)SPI_RST_PIN,
+           (unsigned int)spi_cfg_single.frequency,
+           (unsigned int)spi_cfg_single.operation);
+    gh3x2x_port_dump_state("spi_init");
 }
 
 /**
@@ -188,8 +219,9 @@ void hal_gh3x2x_spi_init(void)
  */
 GU8 hal_gh3x2x_spi_write(GU8 write_buffer[], GU16 length)
 {
-    GU8 ret = 1;
+    int spi_ret = 0;
     if (spi_bus_lock(SPI_BUS_CLIENT_GH3X2X, K_MSEC(20)) != 0) {
+        printk("gh3026 spi write lock timeout len=%u\n", (unsigned int)length);
         return 0;
     }
 #if (__GH3X2X_SPI_TYPE__ == __GH3X2X_SPI_TYPE_HARDWARE_CS__)
@@ -199,12 +231,18 @@ GU8 hal_gh3x2x_spi_write(GU8 write_buffer[], GU16 length)
     txb.len = length;
     tx_bufs.buffers = (const struct spi_buf *)&txb;
     tx_bufs.count = 1U;
-    ret = spi_write(gh3x2x_info.spi_dev, &spi_cfg_single, &tx_bufs);
+    spi_ret = spi_write(gh3x2x_info.spi_dev, &spi_cfg_single, &tx_bufs);
 #if (__GH3X2X_SPI_TYPE__ == __GH3X2X_SPI_TYPE_HARDWARE_CS__)
     gpio_pin_set(gh3x2x_info.spi_cs_dev, SPI_CS_PIN,  1);
 #endif
     (void)spi_bus_unlock(SPI_BUS_CLIENT_GH3X2X);
-    return (ret == 0);
+    if (spi_ret != 0) {
+        printk("gh3026 spi write fail: ret=%d len=%u first=0x%02x\n",
+               spi_ret,
+               (unsigned int)length,
+               (unsigned int)((length > 0U && write_buffer != NULL) ? write_buffer[0] : 0U));
+    }
+    return (spi_ret == 0);
 }
 
 
@@ -225,8 +263,9 @@ GU8 hal_gh3x2x_spi_write(GU8 write_buffer[], GU16 length)
  */
 GU8 hal_gh3x2x_spi_read(GU8 read_buffer[], GU16 length)
 {
-    GU8 ret = 1;
+    int spi_ret = 0;
     if (spi_bus_lock(SPI_BUS_CLIENT_GH3X2X, K_MSEC(20)) != 0) {
+        printk("gh3026 spi read lock timeout len=%u\n", (unsigned int)length);
         return 0;
     }
     rxb.buf = read_buffer;
@@ -234,9 +273,14 @@ GU8 hal_gh3x2x_spi_read(GU8 read_buffer[], GU16 length)
     rx_bufs.buffers = &rxb;
     rx_bufs.count = 1U;
 
-    ret = spi_read(gh3x2x_info.spi_dev, &spi_cfg_single, &rx_bufs);
+    spi_ret = spi_read(gh3x2x_info.spi_dev, &spi_cfg_single, &rx_bufs);
     (void)spi_bus_unlock(SPI_BUS_CLIENT_GH3X2X);
-    return (ret == 0);
+    if (spi_ret != 0) {
+        printk("gh3026 spi read fail: ret=%d len=%u\n",
+               spi_ret,
+               (unsigned int)length);
+    }
+    return (spi_ret == 0);
 }
 #elif (__GH3X2X_SPI_TYPE__ == __GH3X2X_SPI_TYPE_HARDWARE_CS__)
 /**
@@ -255,9 +299,10 @@ GU8 hal_gh3x2x_spi_read(GU8 read_buffer[], GU16 length)
  */
 GU8 hal_gh3x2x_spi_write_F1_and_read(GU8 read_buffer[], GU16 length)
 {
-    GU8 ret = 1;
+    int spi_ret = 0;
     GU8 write_buffer[1] = {0xf1};
     if (spi_bus_lock(SPI_BUS_CLIENT_GH3X2X, K_MSEC(20)) != 0) {
+        printk("gh3026 spi f1+read lock timeout len=%u\n", (unsigned int)length);
         return 0;
     }
     gpio_pin_set(gh3x2x_info.spi_cs_dev, SPI_CS_PIN,  0);
@@ -266,18 +311,25 @@ GU8 hal_gh3x2x_spi_write_F1_and_read(GU8 read_buffer[], GU16 length)
     txb.len = 1;
     tx_bufs.buffers = (const struct spi_buf *)&txb;
     tx_bufs.count = 1U;
-    ret = spi_write(gh3x2x_info.spi_dev, &spi_cfg_single, &tx_bufs);
+    spi_ret = spi_write(gh3x2x_info.spi_dev, &spi_cfg_single, &tx_bufs);
 
     rxb.buf = read_buffer;
     rxb.len = length;
     rx_bufs.buffers = &rxb;
     rx_bufs.count = 1U;
 
-    ret = spi_read(gh3x2x_info.spi_dev, &spi_cfg_single, &rx_bufs);
+    if (spi_ret == 0) {
+        spi_ret = spi_read(gh3x2x_info.spi_dev, &spi_cfg_single, &rx_bufs);
+    }
 
     gpio_pin_set(gh3x2x_info.spi_cs_dev, SPI_CS_PIN,  1);
     (void)spi_bus_unlock(SPI_BUS_CLIENT_GH3X2X);
-    return (ret == 0);
+    if (spi_ret != 0) {
+        printk("gh3026 spi f1+read fail: ret=%d len=%u\n",
+               spi_ret,
+               (unsigned int)length);
+    }
+    return (spi_ret == 0);
 }
 #endif
 
@@ -333,6 +385,7 @@ void hal_gh3x2x_reset_pin_init(void)
         return;
     }
     gpio_pin_configure(gh3x2x_info.spi_rst_dev, SPI_RST_PIN, GPIO_OUTPUT_HIGH);
+    gh3x2x_port_dump_state("rst_init");
 }
 
 /**
@@ -350,9 +403,14 @@ void hal_gh3x2x_reset_pin_init(void)
 
 void hal_gh3x2x_reset_pin_ctrl(GU8 pin_level)
 {
+    static uint8_t s_reset_log_cnt;
     GU8 ret = gpio_pin_set(gh3x2x_info.spi_rst_dev, SPI_RST_PIN,  pin_level);
     if (ret < 0) {
         printk("Cannot write gpio");
+    } else if (s_reset_log_cnt < 6U) {
+        s_reset_log_cnt++;
+        printk("gh3026 rst -> %u\n", (unsigned int)pin_level);
+        gh3x2x_port_dump_state("rst_set");
     }
 }
 
@@ -391,6 +449,7 @@ void hal_gh3x2x_int_init(void)
     gpio_add_callback(gh3x2x_info.spi_int_dev, &gh3x2x_int_callback);
 
     gpio_pin_interrupt_configure(gh3x2x_info.spi_int_dev, SPI_INT_PIN, GPIO_INT_EDGE_RISING);
+    gh3x2x_port_dump_state("int_init");
 
 }
 
@@ -457,7 +516,6 @@ void hal_gsensor_start_cache_data(void)
  */
 void hal_gsensor_stop_cache_data(void)
 {
-        
     GOODIX_PLANFROM_INT_GS_STOP_CACHE_ENTITY();
 }
 
@@ -509,45 +567,56 @@ void hal_gsensor_drv_get_fifo_data(STGsensorRawdata gsensor_buffer[], GU16 *gsen
 /*  (*gsensor_buffer_index) can not be allowed bigger than __GSENSOR_DATA_BUFFER_SIZE__  ****************/
 /* Be care for copying data to gsensor_buffer, length of gsensor_buffer is __GSENSOR_DATA_BUFFER_SIZE__ *****/
 /**************************** WARNNING END*****************************************************/
+    GU16 count = 0U;
+
     if (gsensor_buffer == NULL || gsensor_buffer_index == NULL) {
         return;
     }
 
-    GU16 req = *gsensor_buffer_index;
-    if (req == 0U) {
-        req = 1U;
-    }
-    if (req > (__GSENSOR_DATA_BUFFER_SIZE__)) {
-        req = (__GSENSOR_DATA_BUFFER_SIZE__);
-    }
+    while (count < (__GSENSOR_DATA_BUFFER_SIZE__)) {
+        imu_sample_t imu = {0};
+        uint64_t imu_ts_us = 0U;
+        int iret = hal_imu_read_timed(&imu, sizeof(imu), &imu_ts_us, 0);
+        if (iret != 0) {
+            iret = hal_imu_read(&imu, sizeof(imu), 0);
+            if (iret == 0U) {
+                (void)hal_imu_get_latest_us(&imu, &imu_ts_us);
+            }
+        }
+        if (iret != 0) {
+            break;
+        }
 
-    imu_sample_t imu = {0};
-    uint32_t imu_ts_ms = 0;
-    int iret = hal_imu_get_latest(&imu, &imu_ts_ms);
-    if (iret != 0) {
-        *gsensor_buffer_index = 0;
-        return;
-    }
-
-    /* ICM42670 accel @ +/-16g -> 2048 LSB/g. Goodix expects 512 LSB/g. */
-    GS16 ax_512g = (GS16)(imu.accel_x / 4);
-    GS16 ay_512g = (GS16)(imu.accel_y / 4);
-    GS16 az_512g = (GS16)(imu.accel_z / 4);
-
-    for (GU16 i = 0; i < req; i++) {
-        gsensor_buffer[i].sXAxisVal = ax_512g;
-        gsensor_buffer[i].sYAxisVal = ay_512g;
-        gsensor_buffer[i].sZAxisVal = az_512g;
-    }
-    *gsensor_buffer_index = req;
-
+        gsensor_buffer[count].sXAxisVal = (GS16)(imu.accel_x / 4);
+        gsensor_buffer[count].sYAxisVal = (GS16)(imu.accel_y / 4);
+        gsensor_buffer[count].sZAxisVal = (GS16)(imu.accel_z / 4);
 #if (__DRIVER_LIB_MODE__ == __DRV_LIB_WITH_ALGO__)
-    for (GU16 i = 0; i < *gsensor_buffer_index; i++)
-    {
-        GU32 unTimeStamp = (GU32)(imu_ts_ms + ((uint32_t)i * 10U));
-        GH3X2X_TimestampSyncFillAccSyncBuffer(unTimeStamp, gsensor_buffer[i].sXAxisVal, gsensor_buffer[i].sYAxisVal, gsensor_buffer[i].sZAxisVal);
-    }
+        GH3X2X_TimestampSyncFillAccSyncBuffer((GU32)(imu_ts_us / 1000U),
+                                             gsensor_buffer[count].sXAxisVal,
+                                             gsensor_buffer[count].sYAxisVal,
+                                             gsensor_buffer[count].sZAxisVal);
 #endif
+        count++;
+    }
+
+    if (count == 0U) {
+        imu_sample_t imu = {0};
+        uint64_t imu_ts_us = 0U;
+        if (hal_imu_get_latest_us(&imu, &imu_ts_us) == 0) {
+            gsensor_buffer[0].sXAxisVal = (GS16)(imu.accel_x / 4);
+            gsensor_buffer[0].sYAxisVal = (GS16)(imu.accel_y / 4);
+            gsensor_buffer[0].sZAxisVal = (GS16)(imu.accel_z / 4);
+#if (__DRIVER_LIB_MODE__ == __DRV_LIB_WITH_ALGO__)
+            GH3X2X_TimestampSyncFillAccSyncBuffer((GU32)(imu_ts_us / 1000U),
+                                                 gsensor_buffer[0].sXAxisVal,
+                                                 gsensor_buffer[0].sYAxisVal,
+                                                 gsensor_buffer[0].sZAxisVal);
+#endif
+            count = 1U;
+        }
+    }
+
+    *gsensor_buffer_index = count;
 
     GOODIX_PLANFROM_INT_GET_GS_DATA_ENTITY();
 

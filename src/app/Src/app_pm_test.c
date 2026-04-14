@@ -10,7 +10,7 @@
 #include "rt_thread.h"
 #include "system_state.h"
 
-LOG_MODULE_REGISTER(app_pm_test, LOG_LEVEL_WRN);
+LOG_MODULE_REGISTER(app_pm_test, LOG_LEVEL_INF);
 
 #if IS_ENABLED(CONFIG_PM_SERVICE_DEBUG_LOG)
 #define PM_DBG_INF(...) LOG_INF(__VA_ARGS__)
@@ -34,13 +34,79 @@ LOG_MODULE_REGISTER(app_pm_test, LOG_LEVEL_WRN);
 #define FG_REG_VEMPTY      0x3A
 #define FG_REG_MODELCFG    0xDB
 
-/* Default fuel-gauge config for generic 3.7V 550mAh Li-ion */
-#define FG_DESIGNCAP_MAH   550U
+/* Current test battery: 3.7V 280mAh Li-ion */
+#define FG_DESIGNCAP_MAH   280U
 #define FG_FULLSOCTHR_EZ   0x5005U /* 80% recommended for EZ performance */
 #define FG_ICHGTERM_MA     20U     /* assume 20mA termination current */
 #define FG_RSENSE_MOHM     47U     /* estimated Rsense (mOhm) */
 #define FG_VEMPTY_MV       3300U   /* empty voltage */
 #define FG_VRECOV_MV       3600U   /* recovery voltage */
+
+typedef enum {
+    PM_LED_POLICY_OFF = 0,
+    PM_LED_POLICY_ON,
+    PM_LED_POLICY_BLINK,
+} pm_led_policy_t;
+
+static const char *pm_chgin_dtls_str(uint8_t chgin_dtls)
+{
+    switch (chgin_dtls) {
+    case 0x00:
+        return "UVLO";
+    case 0x01:
+        return "INVALID";
+    case 0x02:
+        return "WEAK";
+    case 0x03:
+        return "PRESENT";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static const char *pm_charge_state_str(uint8_t chg_dtls, uint8_t chg, uint8_t chgin_dtls)
+{
+    bool input_present = (chgin_dtls == 0x03U);
+    bool charge_done = ((chg_dtls == 8U) || (chg_dtls == 9U));
+
+    if (charge_done) {
+        return "FULL";
+    }
+    if (chg) {
+        return "CHARGING";
+    }
+    if (input_present) {
+        return "EXTERNAL_PWR";
+    }
+    return "DISCHARGING";
+}
+
+static pm_led_policy_t pm_led_policy_eval(uint8_t chg_dtls, uint8_t chg, uint8_t chgin_dtls)
+{
+    bool input_present = (chgin_dtls == 0x03U);
+    bool charge_done = ((chg_dtls == 8U) || (chg_dtls == 9U));
+
+    if (charge_done) {
+        return PM_LED_POLICY_OFF;
+    }
+    if (chg || input_present) {
+        return PM_LED_POLICY_BLINK;
+    }
+    return PM_LED_POLICY_ON;
+}
+
+static const char *pm_led_policy_str(pm_led_policy_t policy)
+{
+    switch (policy) {
+    case PM_LED_POLICY_ON:
+        return "ON";
+    case PM_LED_POLICY_BLINK:
+        return "BLINK";
+    case PM_LED_POLICY_OFF:
+    default:
+        return "OFF";
+    }
+}
 
 static struct k_thread g_pm_thread;
 RT_THREAD_STACK_DEFINE(g_pm_stack, PM_TEST_STACK_SIZE);
@@ -218,18 +284,20 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
             ARG_UNUSED(stat_glbl);
 
             /* LED policy on GPIO1:
-             * - charging (chg=1): blink 1Hz
-             * - done (chg_dtls=8/9): steady on
-             * - else: off
+             * - discharging: steady on
+             * - charging / external power present: blink 1Hz
+             * - charge done: off
              * GPIO1 LED is active-low (LED to 3.3V_AON).
              */
             uint64_t now = k_uptime_get();
-            if (chg) {
+            pm_led_policy_t led_policy =
+                pm_led_policy_eval(chg_dtls, chg, chgin_dtls);
+            if (led_policy == PM_LED_POLICY_BLINK) {
                 if (now - last_toggle >= 500) {
                     led_on = !led_on;
                     last_toggle = now;
                 }
-            } else if (chg_dtls == 8 || chg_dtls == 9) {
+            } else if (led_policy == PM_LED_POLICY_ON) {
                 led_on = true;
             } else {
                 led_on = false;
@@ -245,6 +313,7 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
         {
             uint16_t raw = 0;
             pm_state_t state = {0};
+            uint32_t cap_est = 0U;
             if (fg_read16(i2c, FG_REG_REPSOC, &raw) == 0) {
                 uint16_t soc_int = (uint16_t)(raw >> 8);
                 uint16_t soc_frac = (uint16_t)(((uint32_t)(raw & 0xFF) * 100U) / 256U);
@@ -252,9 +321,8 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
 
                 /* Estimate capacity from SOC and design capacity */
                 uint32_t soc_x100 = (uint32_t)soc_int * 100U + soc_frac;
-                uint32_t cap_est = (FG_DESIGNCAP_MAH * soc_x100) / 10000U;
+                cap_est = (FG_DESIGNCAP_MAH * soc_x100) / 10000U;
                 PM_DBG_INF("fg cap est: %u mAh (design=%u mAh)", cap_est, FG_DESIGNCAP_MAH);
-                ARG_UNUSED(cap_est);
 
                 state.soc_x100 = (uint16_t)soc_x100;
             } else {
@@ -295,6 +363,20 @@ static void pm_test_entry(void *p1, void *p2, void *p3)
             state.timestamp_ms = (uint32_t)k_uptime_get();
             state.valid = 1;
             system_state_set_pm(&state);
+
+            LOG_INF("PM: soc=%u.%02u%% cap=%u/%umAh vbat=%umV ibat=%dmA state=%s src=%s chg_dtls=%u led=%s",
+                    state.soc_x100 / 100,
+                    state.soc_x100 % 100,
+                    (unsigned int)cap_est,
+                    (unsigned int)FG_DESIGNCAP_MAH,
+                    (unsigned int)state.vcell_mv,
+                    (int)state.current_ma,
+                    pm_charge_state_str(state.chg_dtls, state.chg, state.chgin_dtls),
+                    pm_chgin_dtls_str(state.chgin_dtls),
+                    (unsigned int)state.chg_dtls,
+                    pm_led_policy_str(pm_led_policy_eval(state.chg_dtls,
+                                                         state.chg,
+                                                         state.chgin_dtls)));
         }
         k_msleep(1000);
     }

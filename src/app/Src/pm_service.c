@@ -28,13 +28,79 @@ LOG_MODULE_REGISTER(pm_service, LOG_LEVEL_WRN);
 #define FG_REG_VEMPTY      0x3A
 #define FG_REG_MODELCFG    0xDB
 
-/* Default fuel-gauge config for generic 3.7V 550mAh Li-ion */
-#define FG_DESIGNCAP_MAH   550U
+/* Default fuel-gauge config for current 3.7V 280mAh Li-ion */
+#define FG_DESIGNCAP_MAH   280U
 #define FG_FULLSOCTHR_EZ   0x5005U /* 80% recommended for EZ performance */
 #define FG_ICHGTERM_MA     20U     /* assume 20mA termination current */
 #define FG_RSENSE_MOHM     47U     /* estimated Rsense (mOhm) */
 #define FG_VEMPTY_MV       3300U   /* empty voltage */
 #define FG_VRECOV_MV       3600U   /* recovery voltage */
+
+typedef enum {
+    PM_LED_POLICY_OFF = 0,
+    PM_LED_POLICY_ON,
+    PM_LED_POLICY_BLINK,
+} pm_led_policy_t;
+
+static const char *pm_chgin_dtls_str(uint8_t chgin_dtls)
+{
+    switch (chgin_dtls) {
+    case 0x00:
+        return "UVLO";
+    case 0x01:
+        return "INVALID";
+    case 0x02:
+        return "WEAK";
+    case 0x03:
+        return "PRESENT";
+    default:
+        return "UNKNOWN";
+    }
+}
+
+static const char *pm_charge_state_str(uint8_t chg_dtls, uint8_t chg, uint8_t chgin_dtls)
+{
+    bool input_present = (chgin_dtls == 0x03U);
+    bool charge_done = ((chg_dtls == 8U) || (chg_dtls == 9U));
+
+    if (charge_done) {
+        return "FULL";
+    }
+    if (chg) {
+        return "CHARGING";
+    }
+    if (input_present) {
+        return "EXTERNAL_PWR";
+    }
+    return "DISCHARGING";
+}
+
+static pm_led_policy_t pm_led_policy_eval(uint8_t chg_dtls, uint8_t chg, uint8_t chgin_dtls)
+{
+    bool input_present = (chgin_dtls == 0x03U);
+    bool charge_done = ((chg_dtls == 8U) || (chg_dtls == 9U));
+
+    if (charge_done) {
+        return PM_LED_POLICY_OFF;
+    }
+    if (chg || input_present) {
+        return PM_LED_POLICY_BLINK;
+    }
+    return PM_LED_POLICY_ON;
+}
+
+static const char *pm_led_policy_str(pm_led_policy_t policy)
+{
+    switch (policy) {
+    case PM_LED_POLICY_ON:
+        return "ON";
+    case PM_LED_POLICY_BLINK:
+        return "BLINK";
+    case PM_LED_POLICY_OFF:
+    default:
+        return "OFF";
+    }
+}
 
 static struct k_thread g_pm_svc_thread;
 RT_THREAD_STACK_DEFINE(g_pm_svc_stack, PM_SVC_STACK_SIZE);
@@ -195,16 +261,16 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
              * - otherwise: off
              */
             uint64_t now_ms = k_uptime_get();
-            bool input_present = (next.chgin_dtls == 0x03U);
-            bool charge_done = ((next.chg_dtls == 8U) || (next.chg_dtls == 9U));
+            pm_led_policy_t led_policy =
+                pm_led_policy_eval(next.chg_dtls, next.chg, next.chgin_dtls);
 
-            if (charge_done) {
-                led_on = true;
-            } else if (next.chg || input_present) {
+            if (led_policy == PM_LED_POLICY_BLINK) {
                 if ((now_ms - led_last_toggle_ms) >= 500U) {
                     led_on = !led_on;
                     led_last_toggle_ms = now_ms;
                 }
+            } else if (led_policy == PM_LED_POLICY_ON) {
+                led_on = true;
             } else {
                 led_on = false;
             }
@@ -213,11 +279,12 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
                 LOG_WRN("pm svc: gpio1 set failed: %d", led_ret);
             }
             if ((now_ms - last_led_diag_ms) >= 5000U) {
-                LOG_DBG("pm led: chg_dtls=%u chgin_dtls=%u chg=%u led=%u",
+                LOG_DBG("pm led: chg_dtls=%u chgin_dtls=%u chg=%u led=%u policy=%s",
                         (unsigned int)next.chg_dtls,
                         (unsigned int)next.chgin_dtls,
                         (unsigned int)next.chg,
-                        led_on ? 1U : 0U);
+                        led_on ? 1U : 0U,
+                        pm_led_policy_str(led_policy));
                 last_led_diag_ms = now_ms;
             }
         } else {
@@ -259,9 +326,20 @@ static void pm_service_entry(void *p1, void *p2, void *p3)
         (void)app_bus_publish(&evt);
 
         if (IS_ENABLED(CONFIG_PM_SERVICE_DEBUG_LOG)) {
-            LOG_INF("pm svc: soc=%u.%02u%% v=%umV i=%dmA chg=%u",
-                    next.soc_x100 / 100, next.soc_x100 % 100,
-                    next.vcell_mv, next.current_ma, next.chg);
+            uint32_t cap_est_mah = ((uint32_t)FG_DESIGNCAP_MAH * next.soc_x100) / 10000U;
+            pm_led_policy_t led_policy =
+                pm_led_policy_eval(next.chg_dtls, next.chg, next.chgin_dtls);
+            LOG_INF("PM: soc=%u.%02u%% cap=%u/%umAh vbat=%umV ibat=%dmA state=%s src=%s chg_dtls=%u led=%s",
+                    next.soc_x100 / 100,
+                    next.soc_x100 % 100,
+                    (unsigned int)cap_est_mah,
+                    (unsigned int)FG_DESIGNCAP_MAH,
+                    (unsigned int)next.vcell_mv,
+                    (int)next.current_ma,
+                    pm_charge_state_str(next.chg_dtls, next.chg, next.chgin_dtls),
+                    pm_chgin_dtls_str(next.chgin_dtls),
+                    (unsigned int)next.chg_dtls,
+                    pm_led_policy_str(led_policy));
         }
 
         /* Power rail keep-alive: periodically re-apply default PM mode so
