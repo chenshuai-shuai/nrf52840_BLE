@@ -46,7 +46,9 @@ K_MSGQ_DEFINE(g_uplink_q_low, sizeof(app_uplink_item_t), APP_UPLINK_Q_LEN, 4);
 K_MSGQ_DEFINE(g_downlink_q, sizeof(app_downlink_item_t), APP_DOWNLINK_Q_LEN, 4);
 
 static volatile bool g_uplink_started;
+static volatile bool g_uplink_inited;
 static volatile bool g_uplink_ready;
+static volatile bool g_uplink_paused;
 static volatile bool g_uplink_rx_priority;
 K_MUTEX_DEFINE(g_uplink_tx_lock);
 
@@ -240,14 +242,27 @@ static void uplink_thread_entry(void *p1, void *p2, void *p3)
     uint8_t busy_retry = 0;
 
     while (1) {
-        if (!g_uplink_ready) {
+        if (g_uplink_paused) {
+            k_msleep(10);
+            continue;
+        }
+
+        if (!g_uplink_inited) {
             int ret = hal_ble_init();
             if (ret == HAL_OK) {
-                ret = hal_ble_start();
+                g_uplink_inited = true;
+                LOG_INF("uplink transport initialized");
+            } else {
+                k_msleep(500);
+                continue;
             }
+        }
+
+        if (!g_uplink_ready) {
+            int ret = hal_ble_start();
             if (ret == HAL_OK) {
                 g_uplink_ready = true;
-                LOG_INF("uplink transport initialized");
+                LOG_INF("uplink transport started");
             } else {
                 k_msleep(500);
                 continue;
@@ -360,7 +375,9 @@ int app_uplink_service_start(void)
     k_msgq_purge(&g_uplink_q_normal);
     k_msgq_purge(&g_uplink_q_low);
     k_msgq_purge(&g_downlink_q);
+    g_uplink_inited = false;
     g_uplink_ready = false;
+    g_uplink_paused = false;
 
     int ret = rt_thread_start(&g_uplink_thread,
                               g_uplink_stack,
@@ -384,6 +401,33 @@ int app_uplink_service_stop(void)
     return HAL_ENOTSUP;
 }
 
+int app_uplink_service_pause(void)
+{
+    if (!g_uplink_started) {
+        return HAL_OK;
+    }
+
+    g_uplink_paused = true;
+    if (g_uplink_ready) {
+        int ret = hal_ble_stop();
+        if (ret != HAL_OK) {
+            return ret;
+        }
+        g_uplink_ready = false;
+    }
+    return HAL_OK;
+}
+
+int app_uplink_service_resume(void)
+{
+    if (!g_uplink_started) {
+        return HAL_OK;
+    }
+
+    g_uplink_paused = false;
+    return HAL_OK;
+}
+
 void app_uplink_set_rx_priority(bool enable)
 {
     g_uplink_rx_priority = enable;
@@ -391,7 +435,7 @@ void app_uplink_set_rx_priority(bool enable)
 
 bool app_uplink_service_is_ready(void)
 {
-    return g_uplink_ready && (hal_ble_is_ready() ? true : false);
+    return (!g_uplink_paused) && g_uplink_ready && (hal_ble_is_ready() ? true : false);
 }
 
 size_t app_uplink_max_payload(void)

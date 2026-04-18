@@ -16,6 +16,7 @@
 #include "pm_service.h"
 #include "app_bus.h"
 #include "app_uplink_service.h"
+#include "app_wifi_boot_ctrl.h"
 #include "hal_temp.h"
 
 LOG_MODULE_REGISTER(app_lifecycle, LOG_LEVEL_WRN);
@@ -114,6 +115,29 @@ static int uplink_stop(void)
 static bool uplink_ready(void)
 {
     return app_uplink_service_is_ready();
+}
+
+static int wifi_ctrl_start(void)
+{
+#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
+    int ret = app_wifi_boot_ctrl_start();
+    if (ret != HAL_OK) {
+        return ret;
+    }
+    return app_wifi_boot_ctrl_boot_normal();
+#else
+    return HAL_ENOTSUP;
+#endif
+}
+
+static int wifi_ctrl_stop(void)
+{
+    return HAL_ENOTSUP;
+}
+
+static bool wifi_ctrl_ready(void)
+{
+    return true;
 }
 
 static int rtc_stop(void)
@@ -246,6 +270,17 @@ static app_lifecycle_entry_t g_apps[APP_LC_COUNT] = {
         .ready = pm_ready,
         .st = {.configured = false, .started = false, .ready = false, .last_error = HAL_OK}
     },
+    [APP_LC_WIFI_CTRL] = {
+        .name = "wifi_ctrl",
+        .configured = IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) &&
+                      !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED),
+        .enabled = IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) &&
+                   !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED),
+        .start = wifi_ctrl_start,
+        .stop = wifi_ctrl_stop,
+        .ready = wifi_ctrl_ready,
+        .st = {.configured = false, .started = false, .ready = false, .last_error = HAL_OK}
+    },
     [APP_LC_RTC] = {
         .name = "rtc",
         .configured = IS_ENABLED(CONFIG_APP_RTC_ENABLE),
@@ -317,6 +352,7 @@ static app_lifecycle_entry_t g_apps[APP_LC_COUNT] = {
 
 static const app_boot_item_t g_boot_order[] = {
     {.id = APP_LC_PM, .required = true,  .deps_mask = 0},
+    {.id = APP_LC_WIFI_CTRL, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_UPLINK, .required = false, .deps_mask = BIT(APP_LC_PM)},
     {.id = APP_LC_RTC, .required = false, .deps_mask = BIT(APP_LC_UPLINK)},
     {.id = APP_LC_PPG, .required = false, .deps_mask = BIT(APP_LC_PM)},

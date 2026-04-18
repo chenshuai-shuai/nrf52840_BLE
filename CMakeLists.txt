@@ -21,6 +21,8 @@ set(APP_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_bus.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_data_store.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_db.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_mode_manager.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_quiet_manager.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_uplink_service.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_lifecycle.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_rtc.c

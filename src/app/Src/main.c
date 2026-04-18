@@ -9,6 +9,7 @@
 
 #include "app_lifecycle.h"
 #include "app_bus.h"
+#include "app_mode_manager.h"
 #include "boot_tone.h"
 #include "system_state.h"
 #include "app_db.h"
@@ -40,6 +41,7 @@ int main(void)
     }
 
     system_state_init();
+    app_mode_manager_init();
     (void)app_db_init();
     (void)spi_bus_arbiter_init();
     ret = app_bus_start();

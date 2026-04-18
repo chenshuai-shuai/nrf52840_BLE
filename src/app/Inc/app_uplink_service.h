@@ -19,6 +19,8 @@ typedef enum {
 
 int app_uplink_service_start(void);
 int app_uplink_service_stop(void);
+int app_uplink_service_pause(void);
+int app_uplink_service_resume(void);
 bool app_uplink_service_is_ready(void);
 size_t app_uplink_max_payload(void);
 int app_uplink_take_downlink(app_data_record_t *out, int timeout_ms);
