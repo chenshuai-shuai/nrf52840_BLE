@@ -3,6 +3,7 @@
 #include <errno.h>
 
 #include "app_uplink_service.h"
+#include "app_bus.h"
 #include "app_db.h"
 #include "hal_ble.h"
 #include "rt_thread.h"
@@ -50,7 +51,35 @@ static volatile bool g_uplink_inited;
 static volatile bool g_uplink_ready;
 static volatile bool g_uplink_paused;
 static volatile bool g_uplink_rx_priority;
+static bool g_uplink_ready_reported;
 K_MUTEX_DEFINE(g_uplink_tx_lock);
+
+static bool uplink_effective_ready(void)
+{
+    return (!g_uplink_paused) && g_uplink_ready && (hal_ble_is_ready() ? true : false);
+}
+
+static void uplink_publish_state_if_changed(void)
+{
+    bool ready = uplink_effective_ready();
+    static bool first_report = true;
+
+    if (!first_report && ready == g_uplink_ready_reported) {
+        return;
+    }
+
+    g_uplink_ready_reported = ready;
+    first_report = false;
+
+    app_event_t evt = {
+        .id = APP_EVT_UPLINK_STATE,
+        .timestamp_ms = (uint32_t)k_uptime_get(),
+        .data.uplink = {
+            .ready = ready,
+        },
+    };
+    (void)app_bus_publish(&evt);
+}
 
 static size_t uplink_max_payload_bytes(void)
 {
@@ -243,6 +272,7 @@ static void uplink_thread_entry(void *p1, void *p2, void *p3)
 
     while (1) {
         if (g_uplink_paused) {
+            uplink_publish_state_if_changed();
             k_msleep(10);
             continue;
         }
@@ -263,11 +293,14 @@ static void uplink_thread_entry(void *p1, void *p2, void *p3)
             if (ret == HAL_OK) {
                 g_uplink_ready = true;
                 LOG_INF("uplink transport started");
+                uplink_publish_state_if_changed();
             } else {
                 k_msleep(500);
                 continue;
             }
         }
+
+        uplink_publish_state_if_changed();
 
         uint32_t drained = poll_downlink_burst(&recv_ok, &recv_drop);
 
@@ -378,6 +411,7 @@ int app_uplink_service_start(void)
     g_uplink_inited = false;
     g_uplink_ready = false;
     g_uplink_paused = false;
+    g_uplink_ready_reported = false;
 
     int ret = rt_thread_start(&g_uplink_thread,
                               g_uplink_stack,
@@ -415,6 +449,7 @@ int app_uplink_service_pause(void)
         }
         g_uplink_ready = false;
     }
+    uplink_publish_state_if_changed();
     return HAL_OK;
 }
 
@@ -425,6 +460,7 @@ int app_uplink_service_resume(void)
     }
 
     g_uplink_paused = false;
+    uplink_publish_state_if_changed();
     return HAL_OK;
 }
 
@@ -435,7 +471,7 @@ void app_uplink_set_rx_priority(bool enable)
 
 bool app_uplink_service_is_ready(void)
 {
-    return (!g_uplink_paused) && g_uplink_ready && (hal_ble_is_ready() ? true : false);
+    return uplink_effective_ready();
 }
 
 size_t app_uplink_max_payload(void)

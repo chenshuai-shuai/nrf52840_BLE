@@ -8,16 +8,23 @@ extern "C" {
 #endif
 
 typedef enum {
-    APP_AUDIO_OWNER_NONE = 0,
-    APP_AUDIO_OWNER_NRF,
-    APP_AUDIO_OWNER_WIFI,
-} app_audio_owner_t;
+    APP_AUDIO_STATE_SAFE_HANDOFF = 0,
+    APP_AUDIO_STATE_NRF_AUDIO_OWNER,
+    APP_AUDIO_STATE_ESP_AUDIO_OWNER,
+    APP_AUDIO_STATE_NRF_ESP_BOOTCTRL,
+} app_audio_route_state_t;
 
 int app_audio_route_init(void);
-int app_audio_route_request_wifi(void);
-int app_audio_route_release_wifi(void);
-app_audio_owner_t app_audio_route_owner_get(void);
-bool app_audio_route_is_wifi_active(void);
+app_audio_route_state_t app_audio_route_get_state(void);
+
+int app_audio_route_enter_safe(void);
+int app_audio_route_enter_bootctrl(void);
+
+int app_audio_route_request_nrf_audio(void);
+int app_audio_route_request_esp_audio(void);
+
+bool app_audio_route_is_nrf_owner(void);
+bool app_audio_route_is_esp_owner(void);
 
 #ifdef __cplusplus
 }

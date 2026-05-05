@@ -13,8 +13,10 @@
 #include "app_ppg_hr.h"
 #include "app_pm_test.h"
 #include "app_temp_test.h"
+#include "app_audio_route.h"
 #include "pm_service.h"
 #include "app_bus.h"
+#include "app_esp_link.h"
 #include "app_uplink_service.h"
 #include "app_wifi_boot_ctrl.h"
 #include "hal_temp.h"
@@ -124,12 +126,20 @@ static int wifi_ctrl_start(void)
     if (ret != HAL_OK) {
         return ret;
     }
+    ret = app_esp_link_start();
+    if (ret != HAL_OK) {
+        return ret;
+    }
     ret = app_wifi_boot_ctrl_boot_normal();
     if (ret != HAL_OK) {
         return ret;
     }
+    ret = app_audio_route_enter_safe();
+    if (ret != HAL_OK) {
+        return ret;
+    }
 
-    ret = app_wifi_boot_ctrl_ping();
+    ret = app_esp_link_ping();
     if (ret != HAL_OK) {
         LOG_WRN("wifi ctrl ping failed: %d", ret);
     }

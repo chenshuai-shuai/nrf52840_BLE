@@ -7,6 +7,7 @@
 #include "platform_init.h"
 #include "error.h"
 
+#include "app_esp_link.h"
 #include "app_audio_route.h"
 #include "app_lifecycle.h"
 #include "app_bus.h"
@@ -43,7 +44,7 @@ int main(void)
 
     system_state_init();
     app_mode_manager_init();
-    (void)app_audio_route_init();
+    (void)app_esp_link_init();
     (void)app_db_init();
     (void)spi_bus_arbiter_init();
     ret = app_bus_start();
@@ -51,6 +52,7 @@ int main(void)
         printk("app_bus_start failed: %d\n", ret);
         return ret;
     }
+    (void)app_audio_route_init();
 
 #if IS_ENABLED(CONFIG_SPK_TEST)
     ret = start_pm_baseline("spk_test");
@@ -163,6 +165,12 @@ int main(void)
     ret = app_wifi_boot_ctrl_start();
     if (ret != HAL_OK) {
         printk("wifi_boot_ctrl start failed: %d\n", ret);
+        return ret;
+    }
+
+    ret = app_esp_link_start();
+    if (ret != HAL_OK) {
+        printk("esp_link start failed: %d\n", ret);
         return ret;
     }
 

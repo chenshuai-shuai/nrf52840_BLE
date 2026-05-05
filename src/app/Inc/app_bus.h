@@ -16,6 +16,7 @@ typedef enum {
     APP_EVT_PM_STATE = 0,
     APP_EVT_PPG_HR,
     APP_EVT_GPS_FIX,
+    APP_EVT_UPLINK_STATE,
     APP_EVT_APP_LIFECYCLE,
     APP_EVT_COUNT
 } app_event_id_t;
@@ -27,6 +28,9 @@ typedef struct {
         pm_state_t pm;
         hal_ppg_sample_t ppg;
         gps_state_t gps;
+        struct {
+            bool ready;
+        } uplink;
         struct {
             app_lifecycle_id_t app_id;
             app_lifecycle_status_t status;

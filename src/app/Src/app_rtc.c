@@ -17,7 +17,6 @@
 #include "hal_mic.h"
 #include "error.h"
 #include "spk_postproc.h"
-#include "app_wifi_boot_ctrl.h"
 
 #include <zephyr/logging/log.h>
 #include "rt_thread.h"
@@ -506,7 +505,9 @@ int app_rtc_audio_suspend(void)
 
     mic_drop_queue();
 
+#if defined(CONFIG_HAL_MIC) && defined(CONFIG_DRIVER_MIC_NRF)
     (void)hal_mic_stop();
+#endif
 #if defined(CONFIG_HAL_SPK) && defined(CONFIG_DRIVER_SPK_NRF)
     (void)hal_spk_stop();
 #endif
@@ -645,33 +646,18 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
     }
 
     if (len == 8 && memcmp(buf, "ESP:PING", 8) == 0) {
-#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
-        int ret = app_wifi_boot_ctrl_ping();
-        if (ret != HAL_OK) {
-            LOG_WRN("CTRL ESP:PING failed: %d", ret);
-        }
-#endif
+        LOG_INF("CTRL ESP:PING ignored by rtc; handoff handled by app_esp_link");
         return true;
     }
 
     if (len == 14 && memcmp(buf, "ESP:CONV_START", 14) == 0) {
-#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
-        int ret = app_wifi_boot_ctrl_conv_start();
-        if (ret != HAL_OK) {
-            LOG_WRN("CTRL ESP:CONV_START failed: %d", ret);
-        }
-#endif
+        LOG_INF("CTRL ESP:CONV_START ignored by rtc; handoff handled by app_audio_route");
         return true;
     }
 
     if ((len == 13 && memcmp(buf, "ESP:CONV_STOP", 13) == 0) ||
         (len == 12 && memcmp(buf, "ESP:CONV_END", 12) == 0)) {
-#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
-        int ret = app_wifi_boot_ctrl_conv_stop();
-        if (ret != HAL_OK) {
-            LOG_WRN("CTRL ESP:CONV_STOP failed: %d", ret);
-        }
-#endif
+        LOG_INF("CTRL ESP:CONV_STOP ignored by rtc; handoff handled by app_audio_route");
         return true;
     }
 
@@ -696,14 +682,6 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
     }
     if (len >= 14 && memcmp(buf, "APP_PLAY_START", 14) == 0) {
         LOG_INF("CTRL APP_PLAY_START");
-#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
-        {
-            int ret = app_wifi_boot_ctrl_conv_start();
-            if (ret != HAL_OK) {
-                LOG_WRN("ESP CONV_START failed: %d", ret);
-            }
-        }
-#endif
         g_spk_play_sid++;
         g_spk_t_ctrl_ms = k_uptime_get();
         g_spk_t_first_audio_ms = 0;
@@ -742,14 +720,6 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
     }
     if (len >= 12 && memcmp(buf, "APP_PLAY_END", 12) == 0) {
         LOG_INF("CTRL APP_PLAY_END");
-#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
-        {
-            int ret = app_wifi_boot_ctrl_conv_stop();
-            if (ret != HAL_OK) {
-                LOG_WRN("ESP CONV_STOP failed: %d", ret);
-            }
-        }
-#endif
         g_spk_accept_audio = false;
         spk_mark_eos();
         return true;
@@ -1232,7 +1202,9 @@ int app_rtc_audio_suspend(void)
 
     g_audio_suspend_req = true;
     mic_drop_queue();
+#if defined(CONFIG_HAL_MIC) && defined(CONFIG_DRIVER_MIC_NRF)
     (void)hal_mic_stop();
+#endif
     if (app_state_get() == AUDIO_MODE_PLAY) {
         app_state_set(AUDIO_MODE_UPLOAD);
     }
