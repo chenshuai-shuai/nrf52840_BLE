@@ -7,6 +7,7 @@
 #include "platform_init.h"
 #include "error.h"
 
+#include "app_audio_route.h"
 #include "app_lifecycle.h"
 #include "app_bus.h"
 #include "app_mode_manager.h"
@@ -42,6 +43,7 @@ int main(void)
 
     system_state_init();
     app_mode_manager_init();
+    (void)app_audio_route_init();
     (void)app_db_init();
     (void)spi_bus_arbiter_init();
     ret = app_bus_start();

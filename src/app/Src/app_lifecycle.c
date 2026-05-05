@@ -124,7 +124,16 @@ static int wifi_ctrl_start(void)
     if (ret != HAL_OK) {
         return ret;
     }
-    return app_wifi_boot_ctrl_boot_normal();
+    ret = app_wifi_boot_ctrl_boot_normal();
+    if (ret != HAL_OK) {
+        return ret;
+    }
+
+    ret = app_wifi_boot_ctrl_ping();
+    if (ret != HAL_OK) {
+        LOG_WRN("wifi ctrl ping failed: %d", ret);
+    }
+    return HAL_OK;
 #else
     return HAL_ENOTSUP;
 #endif

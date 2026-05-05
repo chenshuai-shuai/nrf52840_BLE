@@ -18,6 +18,7 @@ endif()
 
 set(APP_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/main.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_audio_route.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_bus.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_data_store.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_db.c

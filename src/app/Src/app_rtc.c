@@ -17,6 +17,7 @@
 #include "hal_mic.h"
 #include "error.h"
 #include "spk_postproc.h"
+#include "app_wifi_boot_ctrl.h"
 
 #include <zephyr/logging/log.h>
 #include "rt_thread.h"
@@ -210,6 +211,24 @@ static void mic_dsp_process(int16_t *pcm, size_t samples)
     }
 }
 
+#if defined(CONFIG_MIC_TEST) && (DOWNLINK_TEST == 0)
+static struct k_thread g_mic_test_thread;
+static struct k_thread g_mic_upload_thread;
+#endif
+static bool g_mic_cap_started = false;
+static bool g_mic_up_started = false;
+static bool g_mic_cap_paused = false;
+static bool g_mic_up_paused = false;
+static volatile bool g_mic_pause_req = false;
+static volatile bool g_audio_suspend_req = false;
+K_MUTEX_DEFINE(g_audio_suspend_lock);
+static void mic_drop_queue(void);
+
+static bool mic_pause_active(void)
+{
+    return g_mic_pause_req || g_audio_suspend_req;
+}
+
 #ifdef CONFIG_SPK_STREAM
 #define SPK_STREAM_STACK_SIZE 4096
 #define SPK_STREAM_PRIO 4
@@ -242,15 +261,6 @@ static volatile bool g_spk_buf_full = false;
 static volatile bool g_spk_accept_audio = false;
 static volatile bool g_nrf_ready_sent = false;
 static volatile bool g_playback_critical = false;
-#if defined(CONFIG_MIC_TEST) && (DOWNLINK_TEST == 0)
-static struct k_thread g_mic_test_thread;
-static struct k_thread g_mic_upload_thread;
-#endif
-static bool g_mic_cap_started = false;
-static bool g_mic_up_started = false;
-static bool g_mic_cap_paused = false;
-static bool g_mic_up_paused = false;
-static volatile bool g_mic_pause_req = false;
 static uint32_t g_spk_play_frames = 0;
 static uint32_t g_spk_play_errs = 0;
 static struct spk_enc_slot g_spk_ring[SPK_RING_FRAMES];
@@ -273,8 +283,6 @@ static int64_t g_spk_t_start_ms = 0;
 static int64_t g_spk_t_eos_ms = 0;
 static int64_t g_spk_t_done_ms = 0;
 static int64_t g_spk_last_audio_ms = 0;
-
-static void mic_drop_queue(void);
 
 static size_t spk_make_gap_fill_frame(int16_t *dst,
                                       const int16_t *last_pcm,
@@ -472,6 +480,62 @@ void app_rtc_playback_critical_exit(void)
     g_playback_critical = false;
 }
 
+bool app_rtc_audio_is_suspended(void)
+{
+    return g_audio_suspend_req;
+}
+
+int app_rtc_audio_suspend(void)
+{
+    k_mutex_lock(&g_audio_suspend_lock, K_FOREVER);
+
+    if (g_audio_suspend_req) {
+        k_mutex_unlock(&g_audio_suspend_lock);
+        return HAL_OK;
+    }
+
+    g_audio_suspend_req = true;
+#ifdef CONFIG_SPK_STREAM
+    g_spk_accept_audio = false;
+    g_nrf_ready_sent = false;
+    g_spk_buf_full = false;
+    g_spk_rx_reset = true;
+    g_spk_last_audio_ms = 0;
+    spk_ring_reset();
+#endif
+
+    mic_drop_queue();
+
+    (void)hal_mic_stop();
+#if defined(CONFIG_HAL_SPK) && defined(CONFIG_DRIVER_SPK_NRF)
+    (void)hal_spk_stop();
+#endif
+
+    if (app_state_get() == AUDIO_MODE_PLAY) {
+        app_state_set(AUDIO_MODE_UPLOAD);
+    }
+
+    k_mutex_unlock(&g_audio_suspend_lock);
+    LOG_INF("rtc audio suspended for shared-bus handoff");
+    return HAL_OK;
+}
+
+int app_rtc_audio_resume(void)
+{
+    k_mutex_lock(&g_audio_suspend_lock, K_FOREVER);
+
+    if (!g_audio_suspend_req) {
+        k_mutex_unlock(&g_audio_suspend_lock);
+        return HAL_OK;
+    }
+
+    g_audio_suspend_req = false;
+    k_mutex_unlock(&g_audio_suspend_lock);
+
+    LOG_INF("rtc audio resumed after shared-bus handoff");
+    return HAL_OK;
+}
+
 static int16_t ima_adpcm_decode_nibble(uint8_t nibble, int16_t *pred, uint8_t *index)
 {
     int step = g_ima_step_table[*index];
@@ -579,6 +643,38 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
     if (len <= 0 || buf == NULL) {
         return false;
     }
+
+    if (len == 8 && memcmp(buf, "ESP:PING", 8) == 0) {
+#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
+        int ret = app_wifi_boot_ctrl_ping();
+        if (ret != HAL_OK) {
+            LOG_WRN("CTRL ESP:PING failed: %d", ret);
+        }
+#endif
+        return true;
+    }
+
+    if (len == 14 && memcmp(buf, "ESP:CONV_START", 14) == 0) {
+#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
+        int ret = app_wifi_boot_ctrl_conv_start();
+        if (ret != HAL_OK) {
+            LOG_WRN("CTRL ESP:CONV_START failed: %d", ret);
+        }
+#endif
+        return true;
+    }
+
+    if ((len == 13 && memcmp(buf, "ESP:CONV_STOP", 13) == 0) ||
+        (len == 12 && memcmp(buf, "ESP:CONV_END", 12) == 0)) {
+#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
+        int ret = app_wifi_boot_ctrl_conv_stop();
+        if (ret != HAL_OK) {
+            LOG_WRN("CTRL ESP:CONV_STOP failed: %d", ret);
+        }
+#endif
+        return true;
+    }
+
     if (len >= 12 && memcmp(buf, "APP_SPK_VOL:", 12) == 0) {
         char tmp[5] = {0};
         int n = len - 12;
@@ -600,6 +696,14 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
     }
     if (len >= 14 && memcmp(buf, "APP_PLAY_START", 14) == 0) {
         LOG_INF("CTRL APP_PLAY_START");
+#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
+        {
+            int ret = app_wifi_boot_ctrl_conv_start();
+            if (ret != HAL_OK) {
+                LOG_WRN("ESP CONV_START failed: %d", ret);
+            }
+        }
+#endif
         g_spk_play_sid++;
         g_spk_t_ctrl_ms = k_uptime_get();
         g_spk_t_first_audio_ms = 0;
@@ -638,6 +742,14 @@ static bool handle_ctrl_msg(const uint8_t *buf, int len)
     }
     if (len >= 12 && memcmp(buf, "APP_PLAY_END", 12) == 0) {
         LOG_INF("CTRL APP_PLAY_END");
+#if IS_ENABLED(CONFIG_WIFI_BOOT_CTRL) && !IS_ENABLED(CONFIG_WIFI_BOOT_CTRL_ISOLATED)
+        {
+            int ret = app_wifi_boot_ctrl_conv_stop();
+            if (ret != HAL_OK) {
+                LOG_WRN("ESP CONV_STOP failed: %d", ret);
+            }
+        }
+#endif
         g_spk_accept_audio = false;
         spk_mark_eos();
         return true;
@@ -866,6 +978,19 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
     spk_postproc_diag_t spk_diag;
 
     while (1) {
+        if (app_rtc_audio_is_suspended()) {
+            if (spk_running) {
+                (void)hal_spk_stop();
+                spk_running = false;
+            }
+            clip_mode = false;
+            stream_mode = false;
+            have_last_pcm = false;
+            gap_fill_frames = 0U;
+            k_sleep(K_MSEC(20));
+            continue;
+        }
+
         int64_t now = k_uptime_get();
         size_t used_now = spk_ring_count();
         bool eos_now = spk_is_eos_received();
@@ -1079,6 +1204,58 @@ static void spk_play_entry(void *p1, void *p2, void *p3)
             app_rtc_playback_critical_exit();
         }
     }
+}
+#endif
+
+#ifndef CONFIG_SPK_STREAM
+void app_rtc_playback_critical_enter(void)
+{
+}
+
+void app_rtc_playback_critical_exit(void)
+{
+}
+
+bool app_rtc_audio_is_suspended(void)
+{
+    return g_audio_suspend_req;
+}
+
+int app_rtc_audio_suspend(void)
+{
+    k_mutex_lock(&g_audio_suspend_lock, K_FOREVER);
+
+    if (g_audio_suspend_req) {
+        k_mutex_unlock(&g_audio_suspend_lock);
+        return HAL_OK;
+    }
+
+    g_audio_suspend_req = true;
+    mic_drop_queue();
+    (void)hal_mic_stop();
+    if (app_state_get() == AUDIO_MODE_PLAY) {
+        app_state_set(AUDIO_MODE_UPLOAD);
+    }
+
+    k_mutex_unlock(&g_audio_suspend_lock);
+    LOG_INF("rtc audio suspended for shared-bus handoff");
+    return HAL_OK;
+}
+
+int app_rtc_audio_resume(void)
+{
+    k_mutex_lock(&g_audio_suspend_lock, K_FOREVER);
+
+    if (!g_audio_suspend_req) {
+        k_mutex_unlock(&g_audio_suspend_lock);
+        return HAL_OK;
+    }
+
+    g_audio_suspend_req = false;
+    k_mutex_unlock(&g_audio_suspend_lock);
+
+    LOG_INF("rtc audio resumed after shared-bus handoff");
+    return HAL_OK;
 }
 #endif
 
@@ -1454,7 +1631,7 @@ static void mic_capture_entry(void *p1, void *p2, void *p3)
     LOG_INF("mic_capture: entry");
 
     while (1) {
-        while (g_mic_pause_req) {
+        while (mic_pause_active()) {
             k_msleep(20);
         }
 
@@ -1484,7 +1661,7 @@ static void mic_capture_entry(void *p1, void *p2, void *p3)
         LOG_INF("MIC test thread started");
 
         while (1) {
-            if (g_mic_pause_req) {
+            if (mic_pause_active()) {
                 break;
             }
             void *buf = NULL;
@@ -1506,7 +1683,7 @@ static void mic_capture_entry(void *p1, void *p2, void *p3)
                     (void)hal_mic_release(buf);
                 }
             } else if (r != HAL_OK) {
-                if (g_mic_pause_req || r == HAL_EBUSY) {
+                if (mic_pause_active() || r == HAL_EBUSY) {
                     break;
                 }
                 LOG_ERR("hal_mic_read_block failed: %d", r);
@@ -1514,9 +1691,9 @@ static void mic_capture_entry(void *p1, void *p2, void *p3)
             }
         }
         (void)hal_mic_stop();
-        if (g_mic_pause_req) {
+        if (mic_pause_active()) {
             mic_drop_queue();
-            while (g_mic_pause_req) {
+            while (mic_pause_active()) {
                 k_msleep(20);
             }
         } else {
@@ -1545,7 +1722,7 @@ static void mic_upload_entry(void *p1, void *p2, void *p3)
     uint32_t sample_cnt = 0;
 
     while (1) {
-        if (g_mic_pause_req) {
+        if (mic_pause_active()) {
             mic_drop_queue();
             k_msleep(20);
             continue;
