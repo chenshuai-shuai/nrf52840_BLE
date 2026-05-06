@@ -3,6 +3,7 @@
 #include <errno.h>
 
 #include "app_uplink_service.h"
+#include "app_ble_maint_ctrl.h"
 #include "app_bus.h"
 #include "app_db.h"
 #include "hal_ble.h"
@@ -212,6 +213,13 @@ static bool poll_downlink_once(uint32_t *rx_ok, uint32_t *rx_drop)
     int rret = hal_ble_recv(buf, sizeof(buf), 0);
     if (rret <= 0) {
         return false;
+    }
+
+    if (app_ble_maint_ctrl_handle_message(buf, rret)) {
+        if (rx_ok != NULL) {
+            (*rx_ok)++;
+        }
+        return true;
     }
 
     app_data_ticket_t ticket;

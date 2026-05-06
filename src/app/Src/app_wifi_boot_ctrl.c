@@ -5,6 +5,7 @@
 #include <zephyr/logging/log.h>
 
 #include "app_audio_route.h"
+#include "app_esp_link.h"
 #include "app_wifi_boot_ctrl.h"
 #include "error.h"
 
@@ -88,6 +89,8 @@ int app_wifi_boot_ctrl_enter_download(void)
         return ret;
     }
 
+    (void)app_esp_link_enter_passthrough();
+
     ret = wifi_boot_gpio_claim();
     if (ret != HAL_OK) {
         return ret;
@@ -108,6 +111,8 @@ int app_wifi_boot_ctrl_boot_normal(void)
         return ret;
     }
 
+    (void)app_esp_link_enter_passthrough();
+
     ret = wifi_boot_gpio_claim();
     if (ret != HAL_OK) {
         return ret;
@@ -117,6 +122,7 @@ int app_wifi_boot_ctrl_boot_normal(void)
     k_msleep(WIFI_BOOT_ASSERT_MS);
     wifi_en_reset_pulse();
     k_msleep(WIFI_BOOT_RELEASE_MS);
+    (void)app_esp_link_enter_runtime();
     LOG_INF("wifi boot: normal boot asserted");
     return HAL_OK;
 }

@@ -17,6 +17,7 @@ typedef enum {
     APP_EVT_PPG_HR,
     APP_EVT_GPS_FIX,
     APP_EVT_UPLINK_STATE,
+    APP_EVT_ESP_LINK_STATE,
     APP_EVT_APP_LIFECYCLE,
     APP_EVT_COUNT
 } app_event_id_t;
@@ -31,6 +32,9 @@ typedef struct {
         struct {
             bool ready;
         } uplink;
+        struct {
+            bool ready;
+        } esp_link;
         struct {
             app_lifecycle_id_t app_id;
             app_lifecycle_status_t status;

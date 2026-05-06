@@ -4,6 +4,8 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 
 project(nrf52840_BLE)
 
+zephyr_compile_definitions(PINCTRL_STATE_PASSTHROUGH=PINCTRL_STATE_PRIV_START)
+
 if(CONFIG_FP_HARDABI)
   set(GH3X2X_DRV_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/drv_lib/gcc_M4_hard/_build/gcc_hard)
   set(GH3X2X_ALGO_LIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/src/gh3x2x_lib_v4100/algo_lib/M4_gcc_hard)
@@ -19,6 +21,7 @@ endif()
 set(APP_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/main.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_audio_route.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_ble_maint_ctrl.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_esp_link.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_bus.c
   ${CMAKE_CURRENT_SOURCE_DIR}/src/app/Src/app_data_store.c

@@ -7,6 +7,7 @@
 #include "platform_init.h"
 #include "error.h"
 
+#include "app_ble_maint_ctrl.h"
 #include "app_esp_link.h"
 #include "app_audio_route.h"
 #include "app_lifecycle.h"
@@ -44,6 +45,7 @@ int main(void)
 
     system_state_init();
     app_mode_manager_init();
+    (void)app_ble_maint_ctrl_init();
     (void)app_esp_link_init();
     (void)app_db_init();
     (void)spi_bus_arbiter_init();
@@ -52,7 +54,6 @@ int main(void)
         printk("app_bus_start failed: %d\n", ret);
         return ret;
     }
-    (void)app_audio_route_init();
 
 #if IS_ENABLED(CONFIG_SPK_TEST)
     ret = start_pm_baseline("spk_test");

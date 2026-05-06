@@ -10,11 +10,7 @@
 
 extern void gh3x2x_port_dump_state(const char *tag);
 
-#if IS_ENABLED(CONFIG_PPG_SPI_PROBE)
-LOG_MODULE_REGISTER(ppg_nrf, LOG_LEVEL_INF);
-#else
 LOG_MODULE_REGISTER(ppg_nrf, LOG_LEVEL_WRN);
-#endif
 
 #define GH3026_THREAD_STACK_SIZE 4096
 #define GH3026_THREAD_PRIORITY   6

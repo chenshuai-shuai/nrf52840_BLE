@@ -4,7 +4,6 @@
 #include <zephyr/logging/log.h>
 
 #include "app_quiet_manager.h"
-#include "app_uplink_service.h"
 #include "error.h"
 
 #if IS_ENABLED(CONFIG_PPG_SPI_PROBE)
@@ -23,7 +22,6 @@ LOG_MODULE_REGISTER(app_quiet_manager, LOG_LEVEL_INF);
 
 typedef struct {
     bool quieted;
-    bool uplink_paused;
     bool ppg_paused;
     bool imu_paused;
     bool gps_paused;
@@ -47,13 +45,6 @@ int app_quiet_manager_enter_update(void)
     if (g_quiet_state.quieted) {
         k_mutex_unlock(&g_quiet_lock);
         return HAL_OK;
-    }
-
-    ret = app_uplink_service_pause();
-    if (ret == HAL_OK) {
-        g_quiet_state.uplink_paused = true;
-    } else {
-        LOG_WRN("quiet: uplink pause failed: %d", ret);
     }
 
 #if IS_ENABLED(CONFIG_PPG_SPI_PROBE)
@@ -107,14 +98,6 @@ int app_quiet_manager_exit_update(void)
         g_quiet_state.ppg_paused = false;
     }
 #endif
-
-    if (g_quiet_state.uplink_paused) {
-        ret = app_uplink_service_resume();
-        if (ret != HAL_OK) {
-            LOG_WRN("quiet: uplink resume failed: %d", ret);
-        }
-        g_quiet_state.uplink_paused = false;
-    }
 
     g_quiet_state.quieted = false;
     k_mutex_unlock(&g_quiet_lock);

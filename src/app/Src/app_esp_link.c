@@ -1,5 +1,6 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
+#include <zephyr/drivers/pinctrl.h>
 #include <zephyr/drivers/uart.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
@@ -9,12 +10,15 @@
 #include <string.h>
 
 #include "app_audio_route.h"
+#include "app_bus.h"
 #include "app_esp_link.h"
 #include "app_mode_manager.h"
 #include "app_wifi_boot_ctrl.h"
 #include "error.h"
 
 LOG_MODULE_REGISTER(app_esp_link, LOG_LEVEL_INF);
+
+#define PINCTRL_STATE_PASSTHROUGH PINCTRL_STATE_PRIV_START
 
 #define WIFI_CMD_UART_NODE  DT_NODELABEL(uart1)
 
@@ -47,6 +51,8 @@ LOG_MODULE_REGISTER(app_esp_link, LOG_LEVEL_INF);
 #define ESP_CMD_AUDIO_RELEASE    "REQ_AUDIO_RELEASE"
 #define ESP_CMD_AUDIO_TAKE       "REQ_AUDIO_TAKE"
 
+#define ESP_RSP_READY            "ESP_READY"
+#define NRF_RSP_READY_ACK        "NRF_READY_ACK"
 #define ESP_RSP_PONG             "ESP_PONG"
 #define ESP_RSP_ACK_RELEASE      "ACK_AUDIO_RELEASE"
 #define ESP_RSP_ACK_TAKE         "ACK_AUDIO_TAKE"
@@ -77,6 +83,9 @@ struct esp_host_cmd_msg {
 };
 
 static const struct device *const g_uart = DEVICE_DT_GET(WIFI_CMD_UART_NODE);
+PINCTRL_DT_DEFINE(WIFI_CMD_UART_NODE);
+static const struct pinctrl_dev_config *const g_uart_pcfg =
+    PINCTRL_DT_DEV_CONFIG_GET(WIFI_CMD_UART_NODE);
 
 static struct esp_link_ctx g_esp_link = {
     .cached_state = APP_ESP_STATE_UNKNOWN,
@@ -98,6 +107,19 @@ static bool line_has_prefix(const char *line, const char *prefix)
     }
 
     return strncmp(line, prefix, strlen(prefix)) == 0;
+}
+
+static void esp_link_publish_ready(bool ready)
+{
+    app_event_t evt = {
+        .id = APP_EVT_ESP_LINK_STATE,
+        .timestamp_ms = (uint32_t)k_uptime_get(),
+        .data.esp_link = {
+            .ready = ready,
+        },
+    };
+
+    (void)app_bus_publish(&evt);
 }
 
 static app_esp_link_state_t esp_state_from_line(const char *line)
@@ -164,6 +186,27 @@ static int esp_uart_send_line(const char *line)
     return HAL_OK;
 }
 
+static void esp_link_set_ready(bool ready)
+{
+    bool changed = (g_esp_link.ready != ready);
+    g_esp_link.ready = ready;
+    if (changed) {
+        esp_link_publish_ready(ready);
+        LOG_INF("esp link state -> %s", ready ? "READY" : "WAIT_READY");
+    }
+}
+
+static int esp_link_apply_pins(uint8_t state)
+{
+    int ret = pinctrl_apply_state(g_uart_pcfg, state);
+    if (ret != 0) {
+        LOG_ERR("esp link: pinctrl state %u failed: %d", (unsigned int)state, ret);
+        return ret;
+    }
+
+    return HAL_OK;
+}
+
 static void esp_rsp_sem_drain(void)
 {
     while (k_sem_take(&g_esp_link_rsp_sem, K_NO_WAIT) == 0) {
@@ -208,6 +251,11 @@ static int esp_link_request_sync(enum esp_link_wait_type type, const char *line)
 
     int lock_ret = k_mutex_lock(&g_esp_link_lock, K_MSEC(2000));
     if (lock_ret != 0) {
+        return HAL_EBUSY;
+    }
+
+    if (!g_esp_link.ready) {
+        k_mutex_unlock(&g_esp_link_lock);
         return HAL_EBUSY;
     }
 
@@ -310,6 +358,14 @@ static void esp_link_handle_line(const char *line)
         if (k_msgq_put(&g_esp_host_cmd_q, &msg, K_NO_WAIT) != 0) {
             LOG_WRN("esp link: host cmd queue full, drop %s", line);
         }
+        return;
+    }
+
+    if (strcmp(line, ESP_RSP_READY) == 0) {
+        LOG_INF("ESP LINK RX: %s", line);
+        (void)esp_uart_send_line(NRF_RSP_READY_ACK);
+        LOG_INF("ESP LINK TX: %s", NRF_RSP_READY_ACK);
+        esp_link_set_ready(true);
         return;
     }
 
@@ -420,6 +476,8 @@ int app_esp_link_start(void)
         return HAL_ENODEV;
     }
 
+    (void)app_esp_link_enter_runtime();
+
     uart_irq_callback_user_data_set(g_uart, esp_uart_isr, NULL);
     uart_irq_rx_enable(g_uart);
 
@@ -459,6 +517,31 @@ int app_esp_link_ping(void)
 }
 
 bool app_esp_link_is_ready(void)
+{
+    return g_esp_link.ready;
+}
+
+int app_esp_link_enter_runtime(void)
+{
+    int ret = esp_link_apply_pins(PINCTRL_STATE_DEFAULT);
+    if (ret == HAL_OK) {
+        esp_link_set_ready(false);
+        LOG_INF("esp link: uart runtime pins active");
+    }
+    return ret;
+}
+
+int app_esp_link_enter_passthrough(void)
+{
+    int ret = esp_link_apply_pins(PINCTRL_STATE_PASSTHROUGH);
+    if (ret == HAL_OK) {
+        esp_link_set_ready(false);
+        LOG_INF("esp link: uart passthrough pins active");
+    }
+    return ret;
+}
+
+bool app_esp_link_protocol_ready(void)
 {
     return g_esp_link.ready;
 }

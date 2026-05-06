@@ -13,11 +13,7 @@
 #include "gh3x2x_demo_algo_call.h"
 #include "goodix_hba.h"
 
-#if IS_ENABLED(CONFIG_PPG_SPI_PROBE)
-LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_INF);
-#else
 LOG_MODULE_REGISTER(app_ppg_hr, LOG_LEVEL_WRN);
-#endif
 
 #define APP_PPG_HR_STACK_SIZE 3072
 #define APP_PPG_HR_PRIORITY   7

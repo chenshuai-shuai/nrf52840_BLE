@@ -135,7 +135,11 @@ static int app_audio_route_ensure_init_locked(void)
 
 static bool audio_route_should_target_nrf(void)
 {
-    return app_uplink_service_is_ready();
+    /* Default audio owner policy: nRF owns shared audio after boot.
+     * ESP may take ownership only when explicitly requested by the
+     * nRF-side state machine / host command path.
+     */
+    return true;
 }
 
 static void audio_route_request_target(bool target_nrf_owner)
@@ -155,7 +159,12 @@ static void audio_route_event_cb(const app_event_t *evt, void *user)
     }
 
     if (evt->id == APP_EVT_UPLINK_STATE) {
-        audio_route_request_target(evt->data.uplink.ready);
+        audio_route_request_target(audio_route_should_target_nrf());
+        return;
+    }
+
+    if (evt->id == APP_EVT_ESP_LINK_STATE) {
+        audio_route_request_target(audio_route_should_target_nrf());
         return;
     }
 
@@ -186,7 +195,7 @@ static void audio_route_monitor_entry(void *p1, void *p2, void *p3)
             if (state != APP_AUDIO_STATE_NRF_AUDIO_OWNER) {
                 (void)app_audio_route_request_nrf_audio();
             }
-        } else if (app_esp_link_is_started()) {
+        } else if (app_esp_link_is_started() && app_esp_link_protocol_ready()) {
             app_audio_route_state_t state = app_audio_route_get_state();
             if (state != APP_AUDIO_STATE_ESP_AUDIO_OWNER) {
                 (void)app_audio_route_request_esp_audio();
@@ -210,6 +219,7 @@ int app_audio_route_init(void)
     }
 
     (void)app_bus_subscribe(APP_EVT_UPLINK_STATE, audio_route_event_cb, NULL);
+    (void)app_bus_subscribe(APP_EVT_ESP_LINK_STATE, audio_route_event_cb, NULL);
     (void)app_bus_subscribe(APP_EVT_APP_LIFECYCLE, audio_route_event_cb, NULL);
 
     if (!g_audio_route.thread_started) {
@@ -275,6 +285,29 @@ int app_audio_route_enter_bootctrl(void)
     return ret;
 }
 
+int app_audio_route_force_nrf_audio(void)
+{
+    int ret;
+
+    k_mutex_lock(&g_audio_route_lock, K_FOREVER);
+    ret = app_audio_route_ensure_init_locked();
+    if (ret == HAL_OK) {
+        ret = app_audio_route_enter_safe_locked();
+    }
+    if (ret == HAL_OK) {
+        ret = app_audio_route_enter_nrf_audio_locked();
+        if (ret == HAL_OK) {
+            g_audio_route.target_nrf_owner = true;
+        }
+    }
+    k_mutex_unlock(&g_audio_route_lock);
+
+    if (ret == HAL_OK) {
+        LOG_INF("audio route: owner -> NRF_AUDIO_OWNER");
+    }
+    return ret;
+}
+
 int app_audio_route_request_nrf_audio(void)
 {
     int ret;
@@ -284,6 +317,9 @@ int app_audio_route_request_nrf_audio(void)
     }
 
     if (app_esp_link_is_started()) {
+        if (!app_esp_link_protocol_ready()) {
+            return HAL_EBUSY;
+        }
         ret = app_esp_link_request_audio_release();
         if (ret != HAL_OK) {
             LOG_WRN("audio route: esp release request failed: %d", ret);
@@ -316,6 +352,9 @@ int app_audio_route_request_esp_audio(void)
 
     if (!app_esp_link_is_started()) {
         return HAL_ENODEV;
+    }
+    if (!app_esp_link_protocol_ready()) {
+        return HAL_EBUSY;
     }
 
     ret = app_esp_link_request_audio_take();

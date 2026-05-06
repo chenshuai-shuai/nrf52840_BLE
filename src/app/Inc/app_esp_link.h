@@ -22,6 +22,9 @@ bool app_esp_link_is_started(void);
 
 int app_esp_link_ping(void);
 bool app_esp_link_is_ready(void);
+int app_esp_link_enter_runtime(void);
+int app_esp_link_enter_passthrough(void);
+bool app_esp_link_protocol_ready(void);
 
 int app_esp_link_query_state(app_esp_link_state_t *state);
 app_esp_link_state_t app_esp_link_cached_state(void);

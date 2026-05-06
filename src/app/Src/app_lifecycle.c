@@ -134,14 +134,13 @@ static int wifi_ctrl_start(void)
     if (ret != HAL_OK) {
         return ret;
     }
-    ret = app_audio_route_enter_safe();
+    ret = app_audio_route_init();
     if (ret != HAL_OK) {
         return ret;
     }
-
-    ret = app_esp_link_ping();
+    ret = app_audio_route_force_nrf_audio();
     if (ret != HAL_OK) {
-        LOG_WRN("wifi ctrl ping failed: %d", ret);
+        return ret;
     }
     return HAL_OK;
 #else
