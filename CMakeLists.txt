@@ -207,6 +207,7 @@ endif()
 
 list(APPEND PLATFORM_SOURCES
   ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/Src/boot_tone.c
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/platform/Src/platform_shared_bus.c
 )
 
 # App target

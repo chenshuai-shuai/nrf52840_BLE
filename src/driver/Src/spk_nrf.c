@@ -11,6 +11,7 @@
 
 #include "hal_spk.h"
 #include "error.h"
+#include "platform_shared_bus.h"
 
 #if IS_ENABLED(CONFIG_PPG_TUNE_MODE)
 LOG_MODULE_REGISTER(spk_nrf, LOG_LEVEL_WRN);
@@ -24,15 +25,7 @@ LOG_MODULE_REGISTER(spk_nrf, LOG_LEVEL_INF);
 #error "i2s0 is not enabled in devicetree"
 #endif
 
-#define AMP_SD_MODE_NODE DT_ALIAS(amp_sd_mode)
 #define AMP_PWR_EN_NODE  DT_ALIAS(amp_pwr_en)
-
-#if DT_NODE_HAS_STATUS(AMP_SD_MODE_NODE, okay)
-#define AMP_HAS_SD_MODE 1
-static const struct gpio_dt_spec amp_sd_mode = GPIO_DT_SPEC_GET(AMP_SD_MODE_NODE, gpios);
-#else
-#define AMP_HAS_SD_MODE 0
-#endif
 
 #if DT_NODE_HAS_STATUS(AMP_PWR_EN_NODE, okay)
 #define AMP_HAS_PWR_EN 1
@@ -62,16 +55,6 @@ static struct {
 static int spk_gpio_init(void)
 {
     int rc;
-#if AMP_HAS_SD_MODE
-    if (!device_is_ready(amp_sd_mode.port)) {
-        return HAL_ENODEV;
-    }
-    rc = gpio_pin_configure_dt(&amp_sd_mode, GPIO_OUTPUT_INACTIVE);
-    if (rc) {
-        return rc;
-    }
-#endif
-
 #if AMP_HAS_PWR_EN
     if (!device_is_ready(amp_pwr_en.port)) {
         return HAL_ENODEV;
@@ -163,15 +146,13 @@ static int spk_nrf_init(void)
 
 static int spk_set_power(bool enable)
 {
-    int rc = 0;
-#if AMP_HAS_PWR_EN
-    rc = gpio_pin_set_dt(&amp_pwr_en, enable ? 1 : 0);
-    if (rc) {
+    int rc = platform_shared_bus_set_amp_sd(enable);
+    if (rc != HAL_OK) {
         return rc;
     }
-#endif
-#if AMP_HAS_SD_MODE
-    rc = gpio_pin_set_dt(&amp_sd_mode, enable ? 1 : 0);
+
+#if AMP_HAS_PWR_EN
+    rc = gpio_pin_set_dt(&amp_pwr_en, enable ? 1 : 0);
     if (rc) {
         return rc;
     }

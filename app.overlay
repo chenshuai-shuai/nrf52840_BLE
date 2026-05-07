@@ -15,20 +15,10 @@
         amp-pwr-en = &amp_pwr_en;
         imu-int = &imu_int;
         wifi-boot-ctrl = &wifi_boot_ctrl;
-        wifi-en-ctrl = &wifi_en_ctrl;
     };
 
     chosen {
         zephyr,settings-partition = &storage_partition;
-    };
-
-    tmp119: tmp119@48 {
-        compatible = "ti,tmp119-sw-i2c";
-        reg = <0x48 1>;
-        scl-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
-        sda-gpios = <&gpio0 28 GPIO_ACTIVE_HIGH>;
-        alert-gpios = <&gpio0 29 GPIO_ACTIVE_LOW>;
-        status = "disabled";
     };
 
     gpio_leds {
@@ -43,11 +33,7 @@
         };
 
         wifi_boot_ctrl: wifi-boot-ctrl {
-            gpios = <&gpio1 2 GPIO_ACTIVE_HIGH>;
-        };
-
-        wifi_en_ctrl: wifi-en-ctrl {
-            gpios = <&gpio1 4 GPIO_ACTIVE_HIGH>;
+            gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
         };
     };
 
@@ -85,6 +71,17 @@
                     <NRF_PSEL(I2S_SDOUT, 1, 6)>,
                     <NRF_PSEL_DISCONNECTED(I2S_SDIN)>,
                     <NRF_PSEL_DISCONNECTED(I2S_MCK)>;
+        };
+    };
+
+    i2s0_sleep: i2s0_sleep {
+        group1 {
+            psels = <NRF_PSEL_DISCONNECTED(I2S_SCK_M)>,
+                    <NRF_PSEL_DISCONNECTED(I2S_LRCK_M)>,
+                    <NRF_PSEL_DISCONNECTED(I2S_SDOUT)>,
+                    <NRF_PSEL_DISCONNECTED(I2S_SDIN)>,
+                    <NRF_PSEL_DISCONNECTED(I2S_MCK)>;
+            low-power-enable;
         };
     };
 
@@ -156,7 +153,8 @@
 &i2s0 {
     status = "okay";
     pinctrl-0 = <&i2s0_default>;
-    pinctrl-names = "default";
+    pinctrl-1 = <&i2s0_sleep>;
+    pinctrl-names = "default", "sleep";
 };
 
 &i2c0 {

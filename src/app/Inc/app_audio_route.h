@@ -19,6 +19,8 @@ app_audio_route_state_t app_audio_route_get_state(void);
 
 int app_audio_route_enter_safe(void);
 int app_audio_route_enter_bootctrl(void);
+int app_audio_route_acquire_bootctrl(void);
+int app_audio_route_finish_bootctrl(void);
 int app_audio_route_force_nrf_audio(void);
 
 int app_audio_route_request_nrf_audio(void);

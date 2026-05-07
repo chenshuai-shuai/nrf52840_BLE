@@ -55,6 +55,8 @@ static volatile bool g_uplink_rx_priority;
 static bool g_uplink_ready_reported;
 K_MUTEX_DEFINE(g_uplink_tx_lock);
 
+static size_t uplink_max_payload_bytes(void);
+
 static bool uplink_effective_ready(void)
 {
     return (!g_uplink_paused) && g_uplink_ready && (hal_ble_is_ready() ? true : false);
@@ -71,6 +73,13 @@ static void uplink_publish_state_if_changed(void)
 
     g_uplink_ready_reported = ready;
     first_report = false;
+
+    LOG_INF("uplink state -> ready=%d started=%d ble_ready=%d paused=%d mtu=%u",
+            ready ? 1 : 0,
+            g_uplink_started ? 1 : 0,
+            hal_ble_is_ready() ? 1 : 0,
+            g_uplink_paused ? 1 : 0,
+            (unsigned int)uplink_max_payload_bytes());
 
     app_event_t evt = {
         .id = APP_EVT_UPLINK_STATE,

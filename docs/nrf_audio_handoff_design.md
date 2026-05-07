@@ -29,12 +29,14 @@ Shared nets from the nRF side:
 
 Board constraint:
 
-- `P1.02` and `P1.04` are physically tied to ESP32 `BOOT/EN` related circuitry on this PCB.
+- ESP32 `BOOT/EN` control has been moved off the shared audio bus and now uses dedicated nRF GPIOs:
+  - `P0.02 -> wifi_boot_ctrl`
+  - `P0.05 -> wifi_en_ctrl`
 
 Therefore:
 
 1. in normal runtime handoff, treat `P1.02/P1.04` as audio lines only
-2. use `P1.02/P1.04` as `BOOT/EN` only inside `NRF_ESP_BOOTCTRL`
+2. use only `P0.02/P0.05` for `BOOT/EN` inside `NRF_ESP_BOOTCTRL`
 3. never perform normal audio handoff by toggling `BOOT/EN`
 
 ## 3. nRF Responsibilities Summary
@@ -91,8 +93,8 @@ nRF requirements:
 - audio already stopped before entering
 - all non-boot shared GPIOs high-z
 - temporarily drive:
-  - `P1.02 -> wifi_boot_ctrl`
-  - `P1.04 -> wifi_en_ctrl`
+  - `P0.02 -> wifi_boot_ctrl`
+  - `P0.05 -> wifi_en_ctrl`
 
 Exit rule:
 
@@ -131,9 +133,9 @@ All shared audio GPIOs must remain input/high-z.
 
 | Pin | Required mode |
 |---|---|
-| `P1.02` | GPIO output for `wifi_boot_ctrl` |
-| `P1.04` | GPIO output for `wifi_en_ctrl` |
-| `P0.26/P1.00/P1.11/P1.06` | input/high-z |
+| `P0.02` | GPIO output for `wifi_boot_ctrl` |
+| `P0.05` | GPIO output for `wifi_en_ctrl` |
+| `P0.26/P1.00/P1.11/P1.06/P1.02/P1.04` | input/high-z |
 
 ## 6. Ownership Policy
 
@@ -273,7 +275,7 @@ Failure handling:
    - `app_wifi_boot_ctrl_reset_only()`
    - `app_wifi_boot_ctrl_boot_normal()`
    - `app_wifi_boot_ctrl_enter_download()`
-4. release `P1.02/P1.04`
+4. release `P0.02/P0.05`
 5. return to `SAFE_HANDOFF`
 6. ping ESP32
 7. if ping succeeds and BLE is disconnected, retry Procedure C
@@ -346,7 +348,7 @@ The nRF implementation is accepted only if all items below are satisfied.
 1. `app_audio_route_enter_safe()` must stop local audio and set all shared audio GPIOs high-z.
 2. `app_audio_route_enter_nrf_audio()` must configure shared GPIOs to audio mode only after safe transition is complete.
 3. `app_audio_route_enter_esp_audio_shadow()` must leave all shared audio GPIOs high-z.
-4. `app_audio_route_enter_bootctrl()` must drive only `P1.02/P1.04` for `BOOT/EN` control and leave other shared pins high-z.
+4. `app_audio_route_enter_bootctrl()` must drive only `P0.02/P0.05` for `BOOT/EN` control and leave all shared audio pins high-z.
 
 ### 13.2 UART/Protocol Acceptance
 
@@ -369,7 +371,7 @@ The nRF implementation is accepted only if all items below are satisfied.
 | `NRF-01` | safe entry | all shared audio pins high-z |
 | `NRF-02` | nRF audio entry | local audio starts only after release ACK |
 | `NRF-03` | ESP shadow entry | nRF shared pins remain high-z |
-| `NRF-04` | bootctrl entry | only `P1.02/P1.04` are driven for boot control |
+| `NRF-04` | bootctrl entry | only `P0.02/P0.05` are driven for boot control |
 | `NRF-05` | BLE connect flow | local state becomes `NRF_AUDIO_OWNER` |
 | `NRF-06` | BLE disconnect flow | local state becomes `ESP_AUDIO_OWNER` |
 | `NRF-07` | invalid reply handling | state falls back to `SAFE_HANDOFF` |

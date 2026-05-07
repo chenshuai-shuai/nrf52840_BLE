@@ -1,6 +1,5 @@
 #include <zephyr/device.h>
 #include <zephyr/devicetree.h>
-#include <zephyr/drivers/gpio.h>
 #include <zephyr/kernel.h>
 #include <zephyr/logging/log.h>
 
@@ -8,59 +7,46 @@
 #include "app_esp_link.h"
 #include "app_wifi_boot_ctrl.h"
 #include "error.h"
+#include "platform_shared_bus.h"
 
 LOG_MODULE_REGISTER(app_wifi_boot_ctrl, LOG_LEVEL_INF);
 
-#define WIFI_BOOT_CTRL_NODE DT_ALIAS(wifi_boot_ctrl)
-#define WIFI_EN_CTRL_NODE   DT_ALIAS(wifi_en_ctrl)
-
-#if !DT_NODE_HAS_STATUS(WIFI_BOOT_CTRL_NODE, okay)
-#error "wifi-boot-ctrl alias is missing"
-#endif
-
-#if !DT_NODE_HAS_STATUS(WIFI_EN_CTRL_NODE, okay)
-#error "wifi-en-ctrl alias is missing"
-#endif
-
 #define WIFI_BOOT_ASSERT_MS     10
-#define WIFI_RESET_PULSE_MS     80
 #define WIFI_BOOT_RELEASE_MS    120
-
-static const struct gpio_dt_spec g_boot_ctrl = GPIO_DT_SPEC_GET(WIFI_BOOT_CTRL_NODE, gpios);
-static const struct gpio_dt_spec g_wifi_en = GPIO_DT_SPEC_GET(WIFI_EN_CTRL_NODE, gpios);
 
 static bool g_wifi_boot_ctrl_prepared;
 static bool g_wifi_boot_ctrl_started;
 
-static int wifi_boot_gpio_claim(void)
+static int wifi_boot_ctrl_prepare_mode(const char *op_name)
 {
-    if (!gpio_is_ready_dt(&g_boot_ctrl) || !gpio_is_ready_dt(&g_wifi_en)) {
-        return HAL_ENODEV;
-    }
-
-    int ret = gpio_pin_configure_dt(&g_boot_ctrl, GPIO_OUTPUT_INACTIVE);
-    if (ret != 0) {
+    int ret = app_audio_route_acquire_bootctrl();
+    if (ret != HAL_OK) {
+        LOG_ERR("wifi boot: acquire bootctrl failed for %s: %d", op_name, ret);
         return ret;
     }
 
-    ret = gpio_pin_configure_dt(&g_wifi_en, GPIO_OUTPUT_INACTIVE);
-    if (ret != 0) {
+    /* Re-apply the shared-bus GPIO mode before touching BOOT/EN so this
+     * path remains correct even after prior audio ownership changes.
+     */
+    ret = platform_shared_bus_enter_nrf_bootctrl();
+    if (ret != HAL_OK) {
+        LOG_ERR("wifi boot: shared bus bootctrl apply failed for %s: %d", op_name, ret);
         return ret;
     }
 
+    if (platform_shared_bus_get_mode() != PLATFORM_SHARED_BUS_NRF_BOOTCTRL) {
+        LOG_ERR("wifi boot: shared bus mode mismatch before %s", op_name);
+        return HAL_EIO;
+    }
+
+    LOG_INF("wifi boot: bootctrl mode ready for %s", op_name);
     return HAL_OK;
 }
 
-static void wifi_boot_ctrl_set(bool asserted)
+static int wifi_boot_ctrl_set(bool asserted)
 {
-    (void)gpio_pin_set_dt(&g_boot_ctrl, asserted ? 1 : 0);
-}
-
-static void wifi_en_reset_pulse(void)
-{
-    (void)gpio_pin_set_dt(&g_wifi_en, 1);
-    k_msleep(WIFI_RESET_PULSE_MS);
-    (void)gpio_pin_set_dt(&g_wifi_en, 0);
+    LOG_INF("wifi boot: set boot ctrl asserted=%d", asserted ? 1 : 0);
+    return platform_shared_bus_set_boot_signal(asserted);
 }
 
 int app_wifi_boot_ctrl_prepare(void)
@@ -71,9 +57,9 @@ int app_wifi_boot_ctrl_prepare(void)
         return HAL_OK;
     }
 
-    ret = wifi_boot_gpio_claim();
+    ret = platform_shared_bus_init();
     if (ret != HAL_OK) {
-        LOG_ERR("wifi boot: gpio init failed: %d", ret);
+        LOG_ERR("wifi boot: shared bus init failed: %d", ret);
         return ret;
     }
 
@@ -84,64 +70,57 @@ int app_wifi_boot_ctrl_prepare(void)
 
 int app_wifi_boot_ctrl_enter_download(void)
 {
-    int ret = app_audio_route_enter_bootctrl();
+    int ret = wifi_boot_ctrl_prepare_mode("enter_download");
     if (ret != HAL_OK) {
         return ret;
     }
 
+    LOG_INF("wifi boot: enter download sequence");
     (void)app_esp_link_enter_passthrough();
 
-    ret = wifi_boot_gpio_claim();
+    ret = wifi_boot_ctrl_set(true);
     if (ret != HAL_OK) {
         return ret;
     }
-
-    wifi_boot_ctrl_set(true);
     k_msleep(WIFI_BOOT_ASSERT_MS);
-    wifi_en_reset_pulse();
     k_msleep(WIFI_BOOT_RELEASE_MS);
-    LOG_INF("wifi boot: download mode asserted");
+    LOG_WRN("wifi boot: download strap asserted on boot pin only; manual ESP reset required");
     return HAL_OK;
 }
 
 int app_wifi_boot_ctrl_boot_normal(void)
 {
-    int ret = app_audio_route_enter_bootctrl();
+    int ret = wifi_boot_ctrl_prepare_mode("boot_normal");
     if (ret != HAL_OK) {
         return ret;
     }
 
+    LOG_INF("wifi boot: enter normal boot sequence");
     (void)app_esp_link_enter_passthrough();
 
-    ret = wifi_boot_gpio_claim();
+    ret = wifi_boot_ctrl_set(false);
     if (ret != HAL_OK) {
         return ret;
     }
-
-    wifi_boot_ctrl_set(false);
     k_msleep(WIFI_BOOT_ASSERT_MS);
-    wifi_en_reset_pulse();
     k_msleep(WIFI_BOOT_RELEASE_MS);
     (void)app_esp_link_enter_runtime();
-    LOG_INF("wifi boot: normal boot asserted");
+    ret = app_audio_route_finish_bootctrl();
+    if (ret != HAL_OK) {
+        return ret;
+    }
+    LOG_INF("wifi boot: normal boot strap set on boot pin only");
     return HAL_OK;
 }
 
 int app_wifi_boot_ctrl_reset_only(void)
 {
-    int ret = app_audio_route_enter_bootctrl();
+    int ret = wifi_boot_ctrl_prepare_mode("reset_only");
     if (ret != HAL_OK) {
         return ret;
     }
 
-    ret = wifi_boot_gpio_claim();
-    if (ret != HAL_OK) {
-        return ret;
-    }
-
-    wifi_en_reset_pulse();
-    k_msleep(WIFI_BOOT_RELEASE_MS);
-    LOG_INF("wifi boot: reset pulse done");
+    LOG_WRN("wifi boot: reset_only no longer drives EN; manual ESP reset required");
     return HAL_OK;
 }
 

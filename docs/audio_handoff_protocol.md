@@ -33,13 +33,16 @@ Shared functional nets:
 
 Critical board-specific constraint:
 
-- nRF `P1.02` and `P1.04` are also reused for ESP32 `BOOT/EN` related control on this PCB.
+- the shared audio bus remains physically tied between nRF and ESP32 on this PCB
+- ESP32 `BOOT/EN` control has been moved off the shared audio pins and now uses dedicated nRF GPIOs:
+  - `P0.02 -> wifi_boot_ctrl`
+  - `P0.05 -> wifi_en_ctrl`
 
 Because of this:
 
 1. normal BLE/Wi-Fi runtime audio switching must use UART coordination only
-2. `BOOT/EN` control must not be used during normal audio handoff
-3. `BOOT/EN` control is reserved for recovery / reset / firmware-download flow only
+2. shared audio pins must not be reused for `BOOT/EN` control during normal audio handoff
+3. `BOOT/EN` control is reserved for recovery / reset / firmware-download flow only and is driven through `P0.02/P0.05`
 
 ## 3. Design Principles
 
@@ -99,7 +102,9 @@ Definition:
 
 Definition:
 
-- nRF temporarily reuses `P1.02/P1.04` for ESP32 `BOOT/EN`
+- nRF temporarily drives dedicated ESP32 `BOOT/EN` control pins
+  - `P0.02 -> wifi_boot_ctrl`
+  - `P0.05 -> wifi_en_ctrl`
 - shared audio path is not active
 
 Use cases only:
@@ -373,7 +378,7 @@ The feature is considered accepted only if all items below pass.
 2. During `ESP_AUDIO_OWNER`, nRF shared audio GPIOs must remain high-z.
 3. During `SAFE_HANDOFF`, both sides' shared audio GPIOs must remain high-z.
 4. During normal audio handoff, `BOOT/EN` control must not be toggled.
-5. `P1.02/P1.04` may be used as `BOOT/EN` only in `NRF_ESP_BOOTCTRL`.
+5. only `P0.02/P0.05` may be used as `BOOT/EN` in `NRF_ESP_BOOTCTRL`; `P1.02/P1.04` remain audio-only pins.
 
 ### 17.3 Robustness Acceptance
 

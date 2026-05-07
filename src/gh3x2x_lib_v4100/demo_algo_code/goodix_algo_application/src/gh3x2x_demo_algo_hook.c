@@ -9,6 +9,11 @@
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/sys/util.h>
 #include <zephyr/kernel.h>
+
+#ifndef GH3X2X_ALGO_VERBOSE_CB_LOG
+#define GH3X2X_ALGO_VERBOSE_CB_LOG 0
+#endif
+
 #if (__GOODIX_ALGO_CALL_MODE__)
 
 __attribute__((weak)) void ppg_nrf_on_hr_result(int32_t hr_bpm, int32_t confidence, int32_t snr, uint32_t frame_id)
@@ -132,7 +137,7 @@ void GH3X2X_HrAlgorithmResultReport(STGh3x2xAlgoResult * pstAlgoResult, GU32 lub
                          (uint32_t)lubFrameId);
 
     GU32 now_ms = (GU32)k_uptime_get();
-    if (IS_ENABLED(CONFIG_PPG_GH_VERBOSE_LOG) && ((now_ms - s_hr_log_ms) >= 5000U)) {
+    if (GH3X2X_ALGO_VERBOSE_CB_LOG && ((now_ms - s_hr_log_ms) >= 5000U)) {
         printk("[gh3x2x_algo]: hr_cb cnt=%u upd=%u hr=%d conf=%d snr=%d frame=%u\n",
                (unsigned int)s_hr_cb_cnt,
                (unsigned int)pstAlgoResult->uchUpdateFlag,
@@ -170,7 +175,7 @@ void GH3X2X_Spo2AlgorithmResultReport(STGh3x2xAlgoResult * pstAlgoResult, GU32 l
 #if (__USE_GOODIX_SPO2_ALGORITHM__)
     static GU32 s_spo2_log_ms = 0;
     GU32 now_ms = (GU32)k_uptime_get();
-    if ((now_ms - s_spo2_log_ms) >= 3000U) {
+    if (GH3X2X_ALGO_VERBOSE_CB_LOG && ((now_ms - s_spo2_log_ms) >= 3000U)) {
         printk("[gh3x2x_algo]: spo2_cb upd=%u spo2=%d conf=%d lvl=%d invalid=%d spo2_hb=%d frame=%u\n",
                (unsigned int)pstAlgoResult->uchUpdateFlag,
                (int)pstAlgoResult->snResult[0],
@@ -210,7 +215,7 @@ void GH3X2X_HrvAlgorithmResultReport(STGh3x2xAlgoResult * pstAlgoResult, GU32 lu
 #if (__USE_GOODIX_HRV_ALGORITHM__)
     static GU32 s_hrv_log_ms = 0;
     GU32 now_ms = (GU32)k_uptime_get();
-    if ((now_ms - s_hrv_log_ms) >= 3000U) {
+    if (GH3X2X_ALGO_VERBOSE_CB_LOG && ((now_ms - s_hrv_log_ms) >= 3000U)) {
         printk("[gh3x2x_algo]: hrv_cb upd=%u out0=%d out1=%d out2=%d out3=%d num=%d conf=%d frame=%u\n",
                (unsigned int)pstAlgoResult->uchUpdateFlag,
                (int)pstAlgoResult->snResult[0],

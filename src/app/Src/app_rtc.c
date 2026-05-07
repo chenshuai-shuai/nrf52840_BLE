@@ -48,6 +48,10 @@ LOG_MODULE_REGISTER(app_rtc, LOG_LEVEL_INF);
 #define DOWNLINK_TEST 0
 #endif
 
+#ifndef APP_RTC_VERBOSE_STREAM_STATS
+#define APP_RTC_VERBOSE_STREAM_STATS 0
+#endif
+
 struct audio_pkt_hdr {
     uint8_t magic0;
     uint8_t magic1;
@@ -1775,14 +1779,16 @@ log_stats:
                 if (sample_cnt > 0) {
                     rms = (uint32_t)(sum_sq / sample_cnt);
                 }
-#if !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
+#if APP_RTC_VERBOSE_STREAM_STATS && !IS_ENABLED(CONFIG_PPG_TUNE_MODE)
                 LOG_INF("MIC stream: frames=%u sent=%u drop=%u nrdy=%u send=%u pkts=%u pcm=%u wire=%u ready=%d max_tx=%u",
                         frames, frames_sent, frames_drop, drop_not_ready, drop_send_fail,
                         pkts_sent, pcm_bytes_sent, wire_bytes_sent,
                         app_uplink_service_is_ready(),
                         (unsigned)app_uplink_max_payload());
 #endif
+#if APP_RTC_VERBOSE_STREAM_STATS
                 LOG_INF("MIC_UP: peak=%d rms=%u samples=%u", (int)peak, rms, (unsigned)sample_cnt);
+#endif
                 last_log = now;
                 peak = 0;
                 sum_sq = 0;

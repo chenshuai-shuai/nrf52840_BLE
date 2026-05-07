@@ -267,6 +267,10 @@ static int esp_link_request_sync(enum esp_link_wait_type type, const char *line)
         g_esp_link.waiting = true;
         g_esp_link.rsp_line[0] = '\0';
 
+        LOG_INF("esp link tx: %s (attempt %u/%u)",
+                line,
+                (unsigned int)(attempt + 1U),
+                (unsigned int)(ESP_LINK_RETRY_MAX + 1U));
         ret = esp_uart_send_line(line);
         if (ret != HAL_OK) {
             g_esp_link.waiting = false;

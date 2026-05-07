@@ -358,7 +358,10 @@ The ESP32 firmware must deliver all of the following:
 
 ## 11. Important Board Constraint
 
-On this PCB, nRF-side `P1.02/P1.04` are physically reused for ESP32 boot-control circuitry.
+On this PCB, ESP32 boot-control is handled by dedicated nRF GPIOs, not by the shared audio pins:
+
+- `P0.02 -> wifi_boot_ctrl`
+- `P0.05 -> wifi_en_ctrl`
 
 Because of that:
 

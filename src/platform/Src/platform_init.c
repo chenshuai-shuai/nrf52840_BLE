@@ -17,6 +17,7 @@
 #include "driver_pm_nrf.h"
 #include "driver_temp_nrf.h"
 #include "error.h"
+#include "platform_shared_bus.h"
 
 #define PLATFORM_NAME_DEFAULT "nrf52840"
 
@@ -26,6 +27,12 @@ static int platform_nrf52840_init(void)
 {
     int ret;
     LOG_INF("platform: register drivers");
+
+    ret = platform_shared_bus_init();
+    if (ret != HAL_OK) {
+        LOG_ERR("platform: shared bus init failed: %d", ret);
+        return ret;
+    }
 
     if (IS_ENABLED(CONFIG_DRIVER_AUDIO_NRF)) {
         LOG_INF("platform: audio_nrf_register");
